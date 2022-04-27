@@ -28,6 +28,10 @@ const int HERO_TRAVEL_SQUARED = HERO_TRAVEL * HERO_TRAVEL;
 const int RIGHT_EDGE = 17630;
 const int BOTTOM_EDGE = 9000;
 
+int radiansToDegrees(double radians) {
+    return (radians * 360.0 / (2 * M_PI)) + 0.5;
+}
+
 enum class EntityType {
     Monster = 0,
     Hero = 1,
@@ -180,7 +184,7 @@ struct Polar
     }
 
     friend ostream& operator << (ostream& out, const Polar& c) {
-        out << "Polar{dist: " << c.dist << ", angle: " << (int)(c.theta * 360.0 / (2 * M_PI)) << "}";
+        out << "Polar{dist: " << c.dist << ", angle: " << radiansToDegrees(c.theta) << "}";
         return out;
     }
 };
@@ -277,15 +281,18 @@ struct Ring {
 
 template <typename T>
 struct RingList {
-    Point center;
-    double startAngle;
-    double endAngle;
-    double segmentArc;
+    const Point center;
+    const double startAngle;
+    const double endAngle;
+    const double segmentArc;
     vector<Ring<T>> rings;
 
-    RingList(const Point& center, int initialDistance, int ringDistance, int ringCount, int segments, double startAngle = 0.0, double endAngle = M_PI * 2.0) {
-        this->center = center;
-        this->segmentArc = (endAngle - startAngle) / (double)segments;
+    RingList(const Point& center, int initialDistance, int ringDistance, int ringCount, int segments, double startAngle = 0.0, double endAngle = M_PI * 2.0)
+        : center(center)
+        , startAngle(startAngle)
+        , endAngle(endAngle)
+        , segmentArc((endAngle - startAngle) / (double)segments)
+    {
         //cerr << elapsed() << "RingList: resizing rings.  Rings: " << ringCount << ", segments: " << segments << endl;
         rings.resize(ringCount);
         int currentDistance = initialDistance;
@@ -326,6 +333,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
     EntityThreatList(const Point& center, int initialDistance, int ringDistance, int ringsToTrack, int segments, double startAngle, double endAngle)
         : RingList<vector<Entity>>(center, initialDistance, ringDistance, ringsToTrack, segments, startAngle, endAngle)
     {
+        cerr << elapsed() << "Initializing threat list.  Start angle: " << radiansToDegrees(startAngle) << ", End angle: " << radiansToDegrees(endAngle) << endl;
     }
 
     vector<Entity> threats;
@@ -344,8 +352,8 @@ struct EntityThreatList : RingList<vector<Entity>> {
                 if (e.end_polar.dist < rings[i].outerDistance) {
                     auto& ring = rings[i];
                     cerr << elapsed() << "Monster " << e.id << " (end distance: " << e.end_polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << ")" << endl;
-                    int segmentNum = e.end_polar.theta / segmentArc;
-
+                    int segmentNum = (e.end_polar.theta - startAngle) / segmentArc;
+                    //cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e.end_polar: " << e.end_polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
                     auto& segment = ring.segmentList[segmentNum];
                     ring.monsterCount++;
                     segment.data.push_back(e);
@@ -483,7 +491,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
         return hero_placements;
     }
 
-    const Entity* findClosestMonsterInSegment(const Entity & hero, const vector<Entity> & monsters, int & min_distance, const Entity* closest = nullptr)
+    const Entity* findClosestMonsterInSegment(const Entity& hero, const vector<Entity>& monsters, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
             int distance = (hero.position - monster.end_position).squared();
@@ -580,28 +588,35 @@ struct EntityThreatList : RingList<vector<Entity>> {
 void find_default_hero_placements(Point& base, int heroes_per_player, double& start_angle, double& end_angle)
 {
     if (base.x == 0 && base.y == 0) {
+        cerr << "Base is top left corner" << endl;
         start_angle = 0;
         end_angle = M_PI_2;
     }
     else if (base.x == RIGHT_EDGE && base.y == 0) {
+        cerr << "Base is top right corner" << endl;
         start_angle = M_PI_2;
         end_angle = M_PI;
     }
     else if (base.x == RIGHT_EDGE && base.y == BOTTOM_EDGE) {
+        cerr << "Base is bottom right corner" << endl;
         start_angle = M_PI;
         end_angle = M_PI * 3.0 / 2.0;
     }
     else if (base.x == 0 && base.y == BOTTOM_EDGE) {
+        cerr << "Base is bottom left corner" << endl;
         start_angle = M_PI * 3.0 / 2.0;
         end_angle = M_PI * 2.0;
     }
     else {
+        cerr << "Base is not in corner" << endl;
         start_angle = 0.0;
         end_angle = M_PI * 2.0;
     }
 
+    cerr << "Base defense start angle: " << radiansToDegrees(start_angle) << ", end angle: " << radiansToDegrees(end_angle) << endl;
+
     double defender_arc = (end_angle - start_angle) / heroes_per_player;
-    double current = defender_arc / 2.0;
+    double current = start_angle + defender_arc / 2.0;
     for (int i = 0; i < heroes_per_player; i++) {
         Point p = Polar(BASE_RADIUS + HERO_TRAVEL, current).toPoint(base);
         cerr << "Default hero position[" << i << "]: " << p << endl;
@@ -624,14 +639,19 @@ int main()
     double start_angle, end_angle;
     find_default_hero_placements(base, heroes_per_player, start_angle, end_angle);
 
+    int turn_count = 0;
     // game loop
     while (1) {
+        turn_count++;
         for (int i = 0; i < 2; i++) {
             int health; // Each player's base health
             int mana; // Ignore in the first league; Spend ten mana to cast a spell
             cin >> health >> mana; cin.ignore();
-            start = Clock::now();
-            cerr << elapsed() << "Base Health: " << health << ", Mana: " << mana << endl;
+            if (i == 0) {
+                start = Clock::now();
+                cerr << elapsed() << "Turn: " << turn_count << endl;
+            }
+            cerr << "Base Health: " << health << ", Mana: " << mana << endl;
         }
         int entity_count; // Amount of heros and monsters you can see
         cin >> entity_count; cin.ignore();
@@ -639,7 +659,6 @@ int main()
         cerr << elapsed() << "Entity Count: " << entity_count << endl;
         vector<Entity> entities(entity_count);
 
-        cerr << elapsed() << "Initializing threat list" << endl;
         EntityThreatList threatList(base, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, start_angle, end_angle);
 
         cerr << elapsed() << "Reading entities" << endl;
@@ -649,7 +668,9 @@ int main()
             entity.end_polar = Polar(base, entity.end_position);
             if (entity.targettingMyBase() || entity.willTargetMyBase())
                 cerr << elapsed() << "Entity[" << i << "]: " << entity << endl;
+            //cerr << elapsed() << "Placing entity " << i << endl;
             threatList.placeEntity(entity);
+            //cerr << elapsed() << "Entity placed " << endl;
         }
         cerr << elapsed() << "Read entities" << endl;
 
