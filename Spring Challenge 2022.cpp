@@ -20,7 +20,7 @@ string elapsed() {
 }
 
 const int BASE_RADIUS = 5000;
-const int RING_SIZE = 1600;
+const int RING_SIZE = 2400;
 const int ATTACK_RADIUS = 800;
 const int HERO_TRAVEL = 800;
 const int HERO_TRAVEL_SQUARED = HERO_TRAVEL * HERO_TRAVEL;
@@ -286,19 +286,19 @@ struct RingList {
     RingList(const Point& center, int initialDistance, int ringDistance, int ringCount, int segments, double startAngle = 0.0, double endAngle = M_PI * 2.0) {
         this->center = center;
         this->segmentArc = (endAngle - startAngle) / (double)segments;
-        cerr << elapsed() << "RingList: resizing rings.  Rings: " << ringCount << ", segments: " << segments << endl;
+        //cerr << elapsed() << "RingList: resizing rings.  Rings: " << ringCount << ", segments: " << segments << endl;
         rings.resize(ringCount);
         int currentDistance = initialDistance;
         for (int i = 0; i < ringCount; i++) {
             auto& ring = rings[i];
             if (i == 0)
-                ring.innerDistance = BASE_RADIUS / 2;
+                ring.innerDistance = 0;
             else
                 ring.innerDistance = rings[i - 1].outerDistance;
             ring.outerDistance = currentDistance;
             currentDistance += ringDistance;
         }
-        cerr << elapsed() << "RingList: initializing segments" << endl;
+        //cerr << elapsed() << "RingList: initializing segments" << endl;
         for (Ring<T>& ring : rings) {
             ring.segmentList.resize(segments);
             for (int i = 0; i < segments; i++) {
@@ -306,7 +306,7 @@ struct RingList {
                 segment.initialize(center, i * segmentArc, (i + 1) * segmentArc, &ring);
             }
         }
-        cerr << elapsed() << "RingList: initialization complete" << endl;
+        //cerr << elapsed() << "RingList: initialization complete" << endl;
     }
 };
 
@@ -323,8 +323,8 @@ Point findInterdictionPoint(const Entity& hero, const Entity& threat) {
 
 struct EntityThreatList : RingList<vector<Entity>> {
 
-    EntityThreatList(const Point& center, int initialDistance, int ringDistance, int ringsToTrack, int segments)
-        : RingList<vector<Entity>>(center, initialDistance, ringDistance, ringsToTrack, segments)
+    EntityThreatList(const Point& center, int initialDistance, int ringDistance, int ringsToTrack, int segments, double startAngle, double endAngle)
+        : RingList<vector<Entity>>(center, initialDistance, ringDistance, ringsToTrack, segments, startAngle, endAngle)
     {
     }
 
@@ -399,6 +399,9 @@ struct EntityThreatList : RingList<vector<Entity>> {
                     for (int segmentNum : segmentNumbers) {
                         Segment<vector<Entity>>& segment = ring.segmentList[segmentNum];
                         map<int, vector<Point>> monsterMap = findBestLocationsToPlaceDefenders(segment, ring);
+                        if (monsterMap.empty())
+                            continue;
+                        //cerr << elapsed() << "Monster map has " << monsterMap.size() << " elements" << endl;
                         auto pointIt = monsterMap.rbegin();
                         const vector<Point>& points = pointIt->second;
                         cerr << elapsed() << points.size() << " points(s) in segment " << segmentNum << " would attack " << pointIt->first << " monster(s):" << endl;
@@ -416,9 +419,13 @@ struct EntityThreatList : RingList<vector<Entity>> {
                             cerr << endl;
                         }
                     }
+                    cerr << elapsed() << "Done examining group of segments " << endl;
                 }
+                cerr << elapsed() << "Done examining ring " << i << endl;
             }
         }
+
+        cerr << elapsed() << "Findings points uniquely reachable " << endl;
 
         vector<vector<Point>> pointsUniquelyReachableByHeroes(heroes.size());
         for (int h = 0; h < heroes.size(); h++) {
@@ -449,6 +456,26 @@ struct EntityThreatList : RingList<vector<Entity>> {
                 cerr << elapsed() << "Assigning hero " << h << " a reachable location (" << placement << ")" << "\n";
             }
             else {
+                for (int r = 0; r < rings.size(); r++) {
+                    Ring<vector<Entity>>& ring = rings[r];
+                    if (!ring.segmentList[h].data.empty()) {
+                        Entity* closest = nullptr;
+                        int min_distance = 0;
+                        for (auto& monster : ring.segmentList[h].data) {
+                            int distance = (heroes[h].position - monster.end_position).squared();
+                            if (closest == nullptr || distance < min_distance) {
+                                closest = &monster;
+                                min_distance = distance;
+                            }
+                        }
+                        if (closest != nullptr) {
+                            placement = closest->end_position;
+                        }
+                        else {
+
+                        }
+                    }
+                }
                 placement = default_hero_location[h];
                 cerr << elapsed() << "Assigning hero " << h << " its default position (" << placement << ")" << "\n";
             }
@@ -477,8 +504,12 @@ struct EntityThreatList : RingList<vector<Entity>> {
         int ringDistance = (ring.outerDistance - ring.innerDistance) / ringsToTrack;
         RingList<int> reachableMonsters(center, ring.innerDistance, ringDistance, ringsToTrack, 6, segment.startAngle, segment.endAngle);
 
+        cerr << elapsed() << "Finding points that reach the most monsters" << endl;
+
         for (Ring<int>& ring : reachableMonsters.rings) {
+            //cerr << elapsed() << "  Examining ring" << endl;
             for (Segment<int>& s : ring.segmentList) {
+                //cerr << elapsed() << "    Examining segment" << endl;
                 for (Entity e : threats) {
                     Delta distance = e.end_position - s.center;
                     if (distance.squared() < attack_squared) {
@@ -489,6 +520,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
             }
         }
 
+        cerr << elapsed() << "Initializing map by monster count to points" << endl;
         map<int, vector<Point>> monsterMap;
         for (Ring<int>& ring : reachableMonsters.rings) {
             for (Segment<int>& s : ring.segmentList) {
@@ -497,6 +529,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
                 }
             }
         }
+        cerr << elapsed() << "Done initializing map by monster count to points" << endl;
         return monsterMap;
     }
 };
@@ -533,10 +566,8 @@ struct EntityThreatList : RingList<vector<Entity>> {
      cerr << Polar(b, p45) << endl;
  }*/
 
-void find_default_hero_placements(Point& base, int heroes_per_player)
+void find_default_hero_placements(Point& base, int heroes_per_player, double& start_angle, double& end_angle)
 {
-    double start_angle;
-    double end_angle;
     if (base.x == 0 && base.y == 0) {
         start_angle = 0;
         end_angle = M_PI_2;
@@ -551,6 +582,10 @@ void find_default_hero_placements(Point& base, int heroes_per_player)
     }
     else if (base.x == 0 && base.y == BOTTOM_EDGE) {
         start_angle = M_PI * 3.0 / 2.0;
+        end_angle = M_PI * 2.0;
+    }
+    else {
+        start_angle = 0.0;
         end_angle = M_PI * 2.0;
     }
 
@@ -575,7 +610,8 @@ int main()
     cin >> heroes_per_player; cin.ignore();
     cerr << elapsed() << "Heroes: " << heroes_per_player << endl;
 
-    find_default_hero_placements(base, heroes_per_player);
+    double start_angle, end_angle;
+    find_default_hero_placements(base, heroes_per_player, start_angle, end_angle);
 
     // game loop
     while (1) {
@@ -593,7 +629,7 @@ int main()
         vector<Entity> entities(entity_count);
 
         cerr << elapsed() << "Initializing threat list" << endl;
-        EntityThreatList threatList(base, BASE_RADIUS, RING_SIZE, 4, 4);
+        EntityThreatList threatList(base, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, start_angle, end_angle);
 
         cerr << elapsed() << "Reading entities" << endl;
         for (int i = 0; i < entity_count; i++) {
