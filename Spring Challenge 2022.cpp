@@ -458,30 +458,41 @@ struct EntityThreatList : RingList<vector<Entity>> {
             else {
                 for (int r = 0; r < rings.size(); r++) {
                     Ring<vector<Entity>>& ring = rings[r];
-                    if (!ring.segmentList[h].data.empty()) {
-                        Entity* closest = nullptr;
-                        int min_distance = 0;
-                        for (auto& monster : ring.segmentList[h].data) {
-                            int distance = (heroes[h].position - monster.end_position).squared();
-                            if (closest == nullptr || distance < min_distance) {
-                                closest = &monster;
-                                min_distance = distance;
-                            }
-                        }
-                        if (closest != nullptr) {
-                            placement = closest->end_position;
-                        }
-                        else {
-
+                    int min_distance;
+                    const Entity* closest = findClosestMonsterInSegment(heroes[h], ring.segmentList[h].data, min_distance);
+                    if (closest == nullptr) {
+                        for (int s = 0; s < ring.segmentList.size(); s++) {
+                            if (s == h)
+                                continue; // we examined this segment first
+                            closest = findClosestMonsterInSegment(heroes[h], ring.segmentList[s].data, min_distance, closest);
                         }
                     }
+                    if (closest != nullptr) {
+                        placement = closest->end_position;
+                        cerr << elapsed() << "Assigning hero " << h << " to the closest monster in ring " << r << " (" << placement << ")" << "\n";
+                        break;
+                    }
+                    else if (r == rings.size() - 1) {
+                        placement = default_hero_location[h];
+                        cerr << elapsed() << "Assigning hero " << h << " its default position (" << placement << ")" << "\n";
+                    }
                 }
-                placement = default_hero_location[h];
-                cerr << elapsed() << "Assigning hero " << h << " its default position (" << placement << ")" << "\n";
             }
             hero_placements[h] = placement;
         }
         return hero_placements;
+    }
+
+    const Entity* findClosestMonsterInSegment(const Entity & hero, const vector<Entity> & monsters, int & min_distance, const Entity* closest = nullptr)
+    {
+        for (auto& monster : monsters) {
+            int distance = (hero.position - monster.end_position).squared();
+            if (closest == nullptr || distance < min_distance) {
+                closest = &monster;
+                min_distance = distance;
+            }
+        }
+        return closest;
     }
 
     template<typename ContainerType>
