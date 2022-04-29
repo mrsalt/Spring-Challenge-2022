@@ -8,6 +8,7 @@
 #include <map>
 #include <set>
 #include <chrono>
+#include <memory>
 
 using namespace std;
 
@@ -24,6 +25,7 @@ const int RING_SIZE = 2400;
 const int ATTACK_RADIUS = 800;
 const int HERO_TRAVEL = 800;
 const int HERO_TRAVEL_SQUARED = HERO_TRAVEL * HERO_TRAVEL;
+const int HERO_DAMAGE = 2; // heroes do 2 points of damage to nearby enemies
 
 const int RIGHT_EDGE = 17630;
 const int BOTTOM_EDGE = 9000;
@@ -125,6 +127,10 @@ struct Point
             return x < other.x;
         }
         return y < other.y;
+    }
+
+    string toString() const {
+        return to_string(x) + " " + to_string(y);
     }
 };
 
@@ -246,6 +252,55 @@ struct Entity
     }
 };
 
+class Action
+{
+public:
+    virtual string toString() = 0;
+};
+
+class WaitAction : public Action
+{
+public:
+    string toString() { return "WAIT"; }
+};
+
+class MoveAction : public Action
+{
+public:
+    const Point location;
+    MoveAction(const Point& p) : location(p) {}
+    string toString() { return "MOVE " + location.toString(); }
+};
+
+class WindSpellAction : public Action
+{
+public:
+    const Point target;
+    WindSpellAction(const Point& target) : target(target) {}
+    string toString() { return "SPELL WIND " + target.toString(); }
+};
+
+class ShieldSpellAction : public Action
+{
+public:
+    const int targetId;
+    ShieldSpellAction(const Entity& target) : targetId(target.id) {}
+    string toString() { return "SPELL SHIELD " + to_string(targetId); }
+};
+
+
+class ControlSpellAction : public Action
+{
+public:
+    const int targetId;
+    const Point location;
+    ControlSpellAction(const Entity& target, const Point& location)
+        : targetId(target.id)
+        , location(location)
+    {}
+    string toString() { return "SPELL CONTROL " + to_string(targetId) + " " + location.toString(); }
+};
+
 template <typename T> struct Ring;
 
 template <typename T>
@@ -364,21 +419,80 @@ struct EntityThreatList : RingList<vector<Entity>> {
         }
     }
 
-    vector<Point> placeDefenders() {
-        cerr << elapsed() << "Placing defenders" << endl;
+    int countTurnsToInterdict(const Entity& threat, const Entity& hero) {
+        Point position = threat.position;
+        for (int turn = 0; turn < 50; turn++) {
+            if ((position - hero.position).distance() < HERO_TRAVEL * (turn + 1))
+                return turn;
+            position += threat.velocity;
+        }
+        cerr << hero << " is unable to interdict " << threat << endl;
+        throw exception();
+    }
+
+    bool canThreatBeEliminated(const Entity& threat) {
+        Point position = threat.position;
+        int health = threat.health;
+        vector<int> turnsToInterdict;
+        for (int h = 0; h < heroes.size(); h++)
+            turnsToInterdict.push_back(countTurnsToInterdict(threat, heroes[h]));
+        for (int turn = 0; turn < 50; turn++) {
+            for (int h = 0; h < heroes.size(); h++)
+                if (turnsToInterdict[h] <= turn)
+                    health -= HERO_DAMAGE;
+            if (health <= 0)
+                return true;
+            position += threat.velocity;
+            if ((position - center).distance() <= 300)
+                return false;
+        }
+        cerr << "Unable to determine if threat can be eliminated " << threat << endl;
+        throw exception();
+    }
+
+    vector<unique_ptr<Action>> determineActions() {
+        cerr << elapsed() << "Determining actions to take" << endl;
+
+        vector<unique_ptr<Action>> actions(heroes.size());
 
         if (threats.empty()) {
             cerr << elapsed() << "No threats.  Ordering all heroes to default locations." << endl;
-            return default_hero_location;
+            for (int h = 0; h < heroes.size(); h++) {
+                actions[h] = make_unique<MoveAction>(default_hero_location[h]);
+            }
+            return actions;
         }
 
         if (threats.size() == 1) {
-            cerr << elapsed() << "Only 1 threat.  Ordering all heroes to interdict." << endl;
-            vector<Point> hero_placements(heroes.size());
-            for (int h = 0; h < heroes.size(); h++) {
-                hero_placements[h] = findInterdictionPoint(heroes[h], threats.front());
+            const Entity& threat = threats.front();
+            if (canThreatBeEliminated(threat)) {
+                cerr << elapsed() << "Only 1 threat.  Ordering required heroes to interdict." << endl;
+
+                // find which heroes are closest
+                vector<int> hero_ids = { 0, 1, 2 };
+                sort(begin(hero_ids), end(hero_ids),
+                    [this, &threat](int hero_a, int hero_b) -> bool
+                    {
+                        const Entity& a = heroes[hero_a];
+                        const Entity& b = heroes[hero_b];
+                        int aDistToMonster = (a.position - threat.position).squared();
+                        int bDistToMonster = (b.position - threat.position).squared();
+                        return aDistToMonster < bDistToMonster;
+                    });
+
+                int attacks_to_eliminate = ((threat.health + HERO_DAMAGE - 1) / HERO_DAMAGE);
+
+                vector<unique_ptr<Action>> actions;
+                for (int i = 0; i < heroes.size() && i < attacks_to_eliminate; i++) {
+                    cerr << elapsed() << "Assigning hero " << hero_ids[i] << " to attack threat." << endl;
+                    actions[hero_ids[i]] = make_unique<MoveAction>(findInterdictionPoint(heroes[hero_ids[i]], threats.front()));
+                }
+                if (attacks_to_eliminate >= heroes.size())
+                    return actions;
             }
-            return hero_placements;
+            else {
+                cerr << "Determined threat cannot be eliminated " << threat << endl;
+            }
         }
 
         vector<set<Point>> pointsReachableByHeroes(heroes.size());
@@ -417,6 +531,8 @@ struct EntityThreatList : RingList<vector<Entity>> {
                             monstersAttackedAtPoint[p] = pointIt->first;
                             cerr << elapsed() << p << ": ";
                             for (int h = 0; h < heroes.size(); h++) {
+                                if (actions[h] != nullptr)
+                                    continue;
                                 const Entity& hero = heroes[h];
                                 Delta dist = hero.position - p;
                                 if (dist.squared() < HERO_TRAVEL_SQUARED) {
@@ -437,6 +553,8 @@ struct EntityThreatList : RingList<vector<Entity>> {
 
         vector<vector<Point>> pointsUniquelyReachableByHeroes(heroes.size());
         for (int h = 0; h < heroes.size(); h++) {
+            if (actions[h] != nullptr)
+                continue;
             cerr << elapsed() << "Hero " << h << " can reach " << pointsReachableByHeroes[h].size() << " points." << endl;
             set<Point> pointsReachableByOtherHeroes;
             for (int i = 0; i < heroes.size(); i++) {
@@ -452,8 +570,11 @@ struct EntityThreatList : RingList<vector<Entity>> {
             cerr << elapsed() << "Hero " << h << " (" << heroes[h].position << ") can reach " << pointsUniquelyReachableByHeroes[h].size() << " unique points." << endl;
         }
 
-        vector<Point> hero_placements(heroes.size());
         for (int h = 0; h < heroes.size(); h++) {
+            if (actions[h] != nullptr) {
+                cerr << elapsed() << "Hero " << h << " is already assigned an action (" << actions[h].get()->toString() << ")" << endl;
+                continue;
+            }
             Point placement;
             if (!pointsUniquelyReachableByHeroes[h].empty()) {
                 placement = findBestPointToAttack(monstersAttackedAtPoint, pointsUniquelyReachableByHeroes[h]);
@@ -486,9 +607,9 @@ struct EntityThreatList : RingList<vector<Entity>> {
                     }
                 }
             }
-            hero_placements[h] = placement;
+            actions[h] = make_unique<MoveAction>(placement);
         }
-        return hero_placements;
+        return actions;
     }
 
     const Entity* findClosestMonsterInSegment(const Entity& hero, const vector<Entity>& monsters, int& min_distance, const Entity* closest = nullptr)
@@ -674,16 +795,12 @@ int main()
         }
         cerr << elapsed() << "Read entities" << endl;
 
-        vector<Point> placements = threatList.placeDefenders();
+        vector<unique_ptr<Action>> actions = threatList.determineActions();
 
-        cerr << elapsed() << "Defenders placed" << endl;
+        cerr << elapsed() << "Actions determined" << endl;
 
-        for (int i = 0; i < heroes_per_player; i++) {
-
-            // Write an action using cout. DON'T FORGET THE "<< endl"
-            cout << "MOVE " << placements[i].x << " " << placements[i].y << endl;
-
-            // In the first league: MOVE <x> <y> | WAIT; In later leagues: | SPELL <spellParams>;
+        for (auto & action : actions) {
+            cout << action->toString() << endl;
         }
     }
 }
