@@ -318,11 +318,11 @@ struct RingList {
 };
 
 Point findInterdictionPoint(const Entity& hero, const Entity& threat) {
-    Point end_position = threat.position;
+    Point position = threat.position;
     for (int turn = 0; turn < 50; turn++) {
-        end_position += threat.velocity;
-        if ((end_position - hero.position).distance() < HERO_TRAVEL * (turn + 1))
-            return end_position;
+        if ((position - hero.position).distance() < HERO_TRAVEL * (turn + 1))
+            return position;
+        position += threat.velocity;
     }
     cerr << hero << " is unable to interdict " << threat << endl;
     throw exception();
@@ -476,7 +476,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
                         }
                     }
                     if (closest != nullptr) {
-                        placement = closest->end_position;
+                        placement = closest->position;
                         cerr << elapsed() << "Assigning hero " << h << " to the closest monster in ring " << r << " (" << placement << ")" << "\n";
                         break;
                     }
@@ -494,7 +494,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
     const Entity* findClosestMonsterInSegment(const Entity& hero, const vector<Entity>& monsters, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
-            int distance = (hero.position - monster.end_position).squared();
+            int distance = (hero.position - monster.position).squared();
             if (closest == nullptr || distance < min_distance) {
                 closest = &monster;
                 min_distance = distance;
@@ -530,7 +530,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
             for (Segment<int>& s : ring.segmentList) {
                 //cerr << elapsed() << "    Examining segment" << endl;
                 for (Entity e : threats) {
-                    Delta distance = e.end_position - s.center;
+                    Delta distance = e.position - s.center;
                     if (distance.squared() < attack_squared) {
                         // if a hero were at this location, it would reach this threat.
                         s.data++;
