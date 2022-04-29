@@ -23,6 +23,7 @@ string elapsed() {
 const int BASE_RADIUS = 5000;
 const int RING_SIZE = 2400;
 const int ATTACK_RADIUS = 800;
+const int ATTACK_SQUARED = ATTACK_RADIUS * ATTACK_RADIUS;
 const int HERO_TRAVEL = 800;
 const int HERO_TRAVEL_SQUARED = HERO_TRAVEL * HERO_TRAVEL;
 const int HERO_DAMAGE = 2; // heroes do 2 points of damage to nearby enemies
@@ -450,6 +451,28 @@ struct EntityThreatList : RingList<vector<Entity>> {
         throw exception();
     }
 
+    unique_ptr<Action> assignMoveAction(const Entity& hero, const Point& p) {
+        Delta d = p - hero.position;
+        int distance = d.distance();
+        Point actualLocation;
+        cerr << elapsed() << "hero moving from " << hero.position << " to " << p << endl;
+        if (distance <= HERO_TRAVEL)
+            actualLocation = p;
+        else {
+            // hero will move towards this location, but will not reach it this turn.
+            // where will it reach this turn?
+            Polar vector(hero.position, p);
+            vector.dist = HERO_TRAVEL;
+            actualLocation = vector.toPoint(hero.position);
+            cerr << elapsed() << "This turn hero can travel to " << actualLocation << endl;
+        }
+        for (Entity& threat : threats) {
+            if ((threat.position - actualLocation).squared() < ATTACK_SQUARED)
+                threat.adjusted_health -= HERO_DAMAGE;
+        }
+        return make_unique<MoveAction>(p);
+    }
+
     vector<unique_ptr<Action>> determineActions() {
         cerr << elapsed() << "Determining actions to take" << endl;
 
@@ -458,7 +481,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
         if (threats.empty()) {
             cerr << elapsed() << "No threats.  Ordering all heroes to default locations." << endl;
             for (int h = 0; h < heroes.size(); h++) {
-                actions[h] = make_unique<MoveAction>(default_hero_location[h]);
+                actions[h] = assignMoveAction(heroes[h], default_hero_location[h]);
             }
             return actions;
         }
@@ -482,10 +505,14 @@ struct EntityThreatList : RingList<vector<Entity>> {
 
                 int attacks_to_eliminate = ((threat.health + HERO_DAMAGE - 1) / HERO_DAMAGE);
 
-                vector<unique_ptr<Action>> actions;
+                cerr << elapsed() << "Closest heroes to threat " << threat.id << " are:" << endl;
+                for (int i = 0; i < heroes.size(); i++)
+                    cerr << elapsed() << hero_ids[i] << endl;
+
                 for (int i = 0; i < heroes.size() && i < attacks_to_eliminate; i++) {
-                    cerr << elapsed() << "Assigning hero " << hero_ids[i] << " to attack threat." << endl;
-                    actions[hero_ids[i]] = make_unique<MoveAction>(findInterdictionPoint(heroes[hero_ids[i]], threats.front()));
+                    const Point& p = findInterdictionPoint(heroes[hero_ids[i]], threat);
+                    cerr << elapsed() << "Assigning hero " << hero_ids[i] << " to attack threat at " << p << endl;
+                    actions[hero_ids[i]] = assignMoveAction(heroes[hero_ids[i]], p);
                 }
                 if (attacks_to_eliminate >= heroes.size())
                     return actions;
@@ -531,7 +558,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
                             monstersAttackedAtPoint[p] = pointIt->first;
                             cerr << elapsed() << p << ": ";
                             for (int h = 0; h < heroes.size(); h++) {
-                                if (actions[h] != nullptr)
+                                if (actions[h])
                                     continue;
                                 const Entity& hero = heroes[h];
                                 Delta dist = hero.position - p;
@@ -553,7 +580,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
 
         vector<vector<Point>> pointsUniquelyReachableByHeroes(heroes.size());
         for (int h = 0; h < heroes.size(); h++) {
-            if (actions[h] != nullptr)
+            if (actions[h])
                 continue;
             cerr << elapsed() << "Hero " << h << " can reach " << pointsReachableByHeroes[h].size() << " points." << endl;
             set<Point> pointsReachableByOtherHeroes;
@@ -571,8 +598,8 @@ struct EntityThreatList : RingList<vector<Entity>> {
         }
 
         for (int h = 0; h < heroes.size(); h++) {
-            if (actions[h] != nullptr) {
-                cerr << elapsed() << "Hero " << h << " is already assigned an action (" << actions[h].get()->toString() << ")" << endl;
+            if (actions[h]) {
+                cerr << elapsed() << "Hero " << h << " is already assigned an action (" << actions[h]->toString() << ")" << endl;
                 continue;
             }
             Point placement;
@@ -607,7 +634,7 @@ struct EntityThreatList : RingList<vector<Entity>> {
                     }
                 }
             }
-            actions[h] = make_unique<MoveAction>(placement);
+            actions[h] = assignMoveAction(heroes[h], placement);
         }
         return actions;
     }
@@ -615,6 +642,8 @@ struct EntityThreatList : RingList<vector<Entity>> {
     const Entity* findClosestMonsterInSegment(const Entity& hero, const vector<Entity>& monsters, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
+            if (monster.adjusted_health <= 0)
+                continue;
             int distance = (hero.position - monster.position).squared();
             if (closest == nullptr || distance < min_distance) {
                 closest = &monster;
@@ -799,7 +828,7 @@ int main()
 
         cerr << elapsed() << "Actions determined" << endl;
 
-        for (auto & action : actions) {
+        for (auto& action : actions) {
             cout << action->toString() << endl;
         }
     }
