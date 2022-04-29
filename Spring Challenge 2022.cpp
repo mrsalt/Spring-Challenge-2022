@@ -135,6 +135,10 @@ struct Point
         return y < other.y;
     }
 
+    bool operator!=(const Point& other) const {
+        return x != other.x || y != other.y;
+    }
+
     string toString() const {
         return to_string(x) + " " + to_string(y);
     }
@@ -525,12 +529,15 @@ struct EntityThreatList : RingList<vector<Entity*>> {
         v.dist = HERO_TRAVEL;
         Delta vector = v.toDelta();
 
-        cerr << elapsed() << "hero moving from " << hero.position << " to " << p << endl;
-        cerr << elapsed() << "  moving with velocity " << vector << " (distance = " << vector.distance() << ")" << endl;
-
         // How many turns until it can damage this location?
         int turns_to_damage = distance / HERO_TRAVEL;
-        cerr << elapsed() << "turns_to_damage(" << turns_to_damage << ") = distance(" << distance << ") / HERO_TRAVEL(" << HERO_TRAVEL << ")" << endl;
+
+        if (hero.position != p) {
+            cerr << elapsed() << "hero moving from " << hero.position << " to " << p << endl;
+            cerr << elapsed() << "  moving with velocity " << vector << " (distance = " << vector.distance() << ")" << endl;
+            cerr << elapsed() << "turns_to_damage(" << turns_to_damage << ") = distance(" << distance << ") / HERO_TRAVEL(" << HERO_TRAVEL << ")" << endl;
+        }
+
 
         for (Entity* threat : threats) {
             Point actualLocation = hero.position;
@@ -554,7 +561,12 @@ struct EntityThreatList : RingList<vector<Entity*>> {
             }
         }
 
-        return make_unique<MoveAction>(p);
+        if (hero.position != p) {
+            return make_unique<MoveAction>(p);
+        }
+        else {
+            return make_unique<WaitAction>();
+        }
     }
 
     vector<unique_ptr<Action>> determineActions() {
@@ -750,7 +762,7 @@ struct EntityThreatList : RingList<vector<Entity*>> {
             //cerr << elapsed() << "  Examining ring" << endl;
             for (Segment<int>& s : ring.segmentList) {
                 //cerr << elapsed() << "    Examining segment" << endl;
-                for (const Entity * e : threats) {
+                for (const Entity* e : threats) {
                     Delta distance = e->position - s.center;
                     if (distance.squared() < attack_squared) {
                         // if a hero were at this location, it would reach this threat.
