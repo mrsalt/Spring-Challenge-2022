@@ -220,7 +220,6 @@ struct Entity
     ThreatType threat_for; // Given this monster's trajectory, is it a threat to 1=your base, 2=your opponent's base, 0=neither
 
     Point end_position;
-    Polar end_polar;
 
     vector<int> damagedBy;
 
@@ -307,13 +306,13 @@ struct Entity
         out << spacer << "id: " << c.id << "\n";
         out << spacer << "type: " << c.type << "\n";
         out << spacer << "position: " << c.position << "\n";
+        out << spacer << "polar: " << c.polar << "\n";
         out << spacer << "shield_life: " << c.shield_life << "\n";
         out << spacer << "health: " << c.health << "\n";
         out << spacer << "is_controlled: " << c.is_controlled << "\n";
         out << spacer << "velocity: " << c.velocity << "\n";
         out << spacer << "threat_for: " << c.threat_for << "\n";
         out << spacer << "end_position: " << c.end_position << "\n";
-        out << spacer << "end_polar: " << c.end_polar << "\n";
         out << "}";
         return out;
     }
@@ -477,9 +476,9 @@ struct EntityThreatList : RingList<vector<Entity*>> {
             for (int i = 0; i < rings.size(); i++) {
                 if (e->polar.dist < rings[i].outerDistance) {
                     auto& ring = rings[i];
-                    cerr << elapsed() << "Monster " << e->id << " (end distance: " << e->end_polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << ")" << endl;
-                    int segmentNum = (e->end_polar.theta - startAngle) / segmentArc;
-                    //cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e->end_polar: " << e->end_polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
+                    cerr << elapsed() << "Monster " << e->id << " (distance: " << e->polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << ")" << endl;
+                    int segmentNum = (e->polar.theta - startAngle) / segmentArc;
+                    cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e->polar: " << e->polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
                     auto& segment = ring.segmentList[segmentNum];
                     segment.data.push_back(e);
                     if (e->targettingMyBase() || e->willTargetMyBase())
@@ -903,7 +902,6 @@ int main()
         for (int i = 0; i < entity_count; i++) {
             Entity& entity = entities[i];
             cin >> entity;
-            entity.end_polar = Polar(base, entity.end_position);
             entity.polar = Polar(base, entity.position);
 
             if (entity.targettingMyBase() || entity.willTargetMyBase())
