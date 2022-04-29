@@ -210,6 +210,7 @@ struct Entity
     int id; // Unique identifier
     EntityType type; // 0=monster, 1=your hero, 2=opponent hero
     Point position; // Position of this entity
+    Polar polar;
     int shield_life; // Ignore for this league; Count down until shield spell fades
     int is_controlled; // Ignore for this league; Equals 1 when this entity is under a control spell
     int health; // Remaining health of this monster
@@ -397,6 +398,7 @@ struct Ring {
     vector<Segment<T>> segmentList;
     int innerDistance;
     int outerDistance;
+    int threatCount;
     int monsterCount;
 };
 
@@ -459,26 +461,29 @@ struct EntityThreatList : RingList<vector<Entity*>> {
 
     vector<Entity*> threats;
     vector<Entity*> heroes;
+    vector<Entity*> monsters;
 
     void placeEntity(Entity* e) {
         if (e->type == EntityType::Hero) {
             heroes.push_back(e);
         }
-        else if (e->targettingMyBase() || e->willTargetMyBase()) {
-            if (e->end_polar.dist >= rings.back().outerDistance) {
-                cerr << elapsed() << "Monster is too far (" << e->end_polar.dist << ") to reach any ring (outer distance: " << rings.back().outerDistance << ")" << endl;
-                return;
+        else if (e->type == EntityType::OpponentHero) {
+        }
+        else {
+            monsters.push_back(e);
+            if (e->targettingMyBase() || e->willTargetMyBase()) {
+                threats.push_back(e);
             }
             for (int i = 0; i < rings.size(); i++) {
-                if (e->end_polar.dist < rings[i].outerDistance) {
+                if (e->polar.dist < rings[i].outerDistance) {
                     auto& ring = rings[i];
                     cerr << elapsed() << "Monster " << e->id << " (end distance: " << e->end_polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << ")" << endl;
                     int segmentNum = (e->end_polar.theta - startAngle) / segmentArc;
                     //cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e->end_polar: " << e->end_polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
                     auto& segment = ring.segmentList[segmentNum];
-                    ring.monsterCount++;
                     segment.data.push_back(e);
-                    threats.push_back(e);
+                    if (e->targettingMyBase() || e->willTargetMyBase())
+                        ring.threatCount++;
                     return;
                 }
             }
@@ -574,8 +579,8 @@ struct EntityThreatList : RingList<vector<Entity*>> {
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
-        if (threats.empty()) {
-            cerr << elapsed() << "No threats.  Ordering all heroes to default locations." << endl;
+        if (monsters.empty()) {
+            cerr << elapsed() << "No monsters.  Ordering all heroes to default locations." << endl;
             for (int h = 0; h < heroes.size(); h++) {
                 actions[h] = assignMoveAction(*heroes[h], default_hero_location[h]);
             }
@@ -899,6 +904,8 @@ int main()
             Entity& entity = entities[i];
             cin >> entity;
             entity.end_polar = Polar(base, entity.end_position);
+            entity.polar = Polar(base, entity.position);
+
             if (entity.targettingMyBase() || entity.willTargetMyBase())
                 cerr << elapsed() << "Entity[" << i << "]: " << entity << endl;
             //cerr << elapsed() << "Placing entity " << i << endl;
