@@ -69,6 +69,11 @@ struct Delta
 {
     int dx;
     int dy;
+
+    Delta operator*(int scalar) const {
+        return { dx * scalar, dy * scalar };
+    }
+
     friend istream& operator >> (istream& in, Delta& d) {
         in >> d.dx >> d.dy;
         return in;
@@ -204,13 +209,15 @@ struct Entity
     int shield_life; // Ignore for this league; Count down until shield spell fades
     int is_controlled; // Ignore for this league; Equals 1 when this entity is under a control spell
     int health; // Remaining health of this monster
-    int adjusted_health;
+    vector<int> adjusted_health;
     Delta velocity; // Trajectory of this monster
     int near_base; // 0=monster with no target yet, 1=monster targeting a base
     ThreatType threat_for; // Given this monster's trajectory, is it a threat to 1=your base, 2=your opponent's base, 0=neither
 
     Point end_position;
     Polar end_polar;
+
+    vector<int> damagedBy;
 
     bool targettingMyBase() const {
         return type == EntityType::Monster && near_base == 1;
@@ -220,13 +227,67 @@ struct Entity
         return type == EntityType::Monster && near_base == 0 && threat_for == ThreatType::MyBase;
     }
 
+    void damage(const Entity& hero, int turnsToReach) {
+        // Each hero can damage a given entity only once.
+        if (find(damagedBy.begin(), damagedBy.end(), hero.id) != damagedBy.end())
+            return;
+        damagedBy.push_back(hero.id);
+
+        // When we start attacking a monster, we project that we will continue to attack it each turn until it is dead.
+        if (adjusted_health.empty()) {
+            int projectedHealth = health;
+            int turnCount = 0;
+            while (projectedHealth > 0) {
+                if (turnCount >= turnsToReach)
+                    projectedHealth -= HERO_DAMAGE;
+                adjusted_health.push_back(projectedHealth);
+                turnCount++;
+            }
+        }
+        else {
+            int cumulative_damage = 0;
+            for (int turnCount = 0; turnCount < adjusted_health.size(); turnCount++) {
+                if (turnCount >= turnsToReach) {
+                    cumulative_damage += HERO_DAMAGE;
+                    adjusted_health[turnCount] -= cumulative_damage;
+                }
+                if (adjusted_health[turnCount] < 0) {
+                    adjusted_health.resize(turnCount + 1);
+                    break;
+                }
+            }
+        }
+        cerr << elapsed() << "Hero " << hero.id << " will cause damage to monster " << id << " (" << this << ").  Current health: " << health << endl;
+        cerr << elapsed() << "  Projected health: " << endl;
+        for (int i = 0; i < adjusted_health.size(); i++) {
+            cerr << elapsed() << "    turn[" << i << "] = " << adjusted_health[i] << endl;
+        }
+    }
+
+    bool isAliveInNTurns(int turns) const {
+        if (adjusted_health.empty())
+            return true;
+        return turns < adjusted_health.size() - 1;
+    }
+
+    int healthInNTurns(int turns) const {
+        if (adjusted_health.empty())
+            return health;
+        if (turns > adjusted_health.size())
+            return -999;
+        return adjusted_health[turns];
+    }
+
+    Point futurePosition(int turns) const {
+        return position + (velocity * turns);
+    }
+
     friend istream& operator >> (istream& in, Entity& c) {
         int entityType;
         in >> c.id >> entityType;
         c.type = (EntityType)entityType;
         in >> c.position;
         in >> c.shield_life >> c.is_controlled >> c.health;
-        c.adjusted_health = c.health;
         int threatType;
         in >> c.velocity >> c.near_base >> threatType;
         c.threat_for = (ThreatType)threatType;
@@ -431,21 +492,26 @@ struct EntityThreatList : RingList<vector<Entity>> {
         throw exception();
     }
 
-    bool canThreatBeEliminated(const Entity& threat) {
+    pair<bool, vector<int>> canThreatBeEliminated(const Entity& threat) {
         Point position = threat.position;
         int health = threat.health;
         vector<int> turnsToInterdict;
         for (int h = 0; h < heroes.size(); h++)
             turnsToInterdict.push_back(countTurnsToInterdict(threat, heroes[h]));
+        vector<int> heroes_who_can_harm_threat;
+
         for (int turn = 0; turn < 50; turn++) {
             for (int h = 0; h < heroes.size(); h++)
-                if (turnsToInterdict[h] <= turn)
+                if (turnsToInterdict[h] <= turn) {
+                    if (turnsToInterdict[h] == turn)
+                        heroes_who_can_harm_threat.push_back(h);
                     health -= HERO_DAMAGE;
+                }
             if (health <= 0)
-                return true;
+                return make_pair(true, heroes_who_can_harm_threat);
             position += threat.velocity;
             if ((position - center).distance() <= 300)
-                return false;
+                return make_pair(false, heroes_who_can_harm_threat);
         }
         cerr << "Unable to determine if threat can be eliminated " << threat << endl;
         throw exception();
@@ -454,22 +520,40 @@ struct EntityThreatList : RingList<vector<Entity>> {
     unique_ptr<Action> assignMoveAction(const Entity& hero, const Point& p) {
         Delta d = p - hero.position;
         int distance = d.distance();
-        Point actualLocation;
+
+        Polar v(hero.position, p);
+        v.dist = HERO_TRAVEL;
+        Delta vector = v.toDelta();
+
         cerr << elapsed() << "hero moving from " << hero.position << " to " << p << endl;
-        if (distance <= HERO_TRAVEL)
-            actualLocation = p;
-        else {
-            // hero will move towards this location, but will not reach it this turn.
-            // where will it reach this turn?
-            Polar vector(hero.position, p);
-            vector.dist = HERO_TRAVEL;
-            actualLocation = vector.toPoint(hero.position);
-            cerr << elapsed() << "This turn hero can travel to " << actualLocation << endl;
-        }
+        cerr << elapsed() << "  moving with velocity " << vector << " (distance = " << vector.distance() << ")" << endl;
+
+        // How many turns until it can damage this location?
+        int turns_to_damage = distance / HERO_TRAVEL;
+        cerr << elapsed() << "turns_to_damage(" << turns_to_damage << ") = distance(" << distance << ") / HERO_TRAVEL(" << HERO_TRAVEL << ")" << endl;
+
         for (Entity& threat : threats) {
-            if ((threat.position - actualLocation).squared() < ATTACK_SQUARED)
-                threat.adjusted_health -= HERO_DAMAGE;
+            Point actualLocation = hero.position;
+
+            for (int t = 0; t < turns_to_damage + 1; t++) {
+                if (t == turns_to_damage)
+                    actualLocation = p;
+                else {
+                    // hero will move towards this location, but will not reach it this turn.
+                    // where will it reach this turn?
+                    actualLocation += vector;
+                }
+
+                Point fp = threat.futurePosition(t);
+                int distanceToThreat = (fp - actualLocation).distance();
+                cerr << elapsed() << "threat future position[" << t << "] = " << fp << ", hero location = " << actualLocation << ", distanceToThreat = " << distanceToThreat << endl;
+                if (distanceToThreat <= ATTACK_RADIUS) {
+                    threat.damage(hero, t);
+                    break;
+                }
+            }
         }
+
         return make_unique<MoveAction>(p);
     }
 
@@ -488,33 +572,16 @@ struct EntityThreatList : RingList<vector<Entity>> {
 
         if (threats.size() == 1) {
             const Entity& threat = threats.front();
-            if (canThreatBeEliminated(threat)) {
-                cerr << elapsed() << "Only 1 threat.  Ordering required heroes to interdict." << endl;
-
-                // find which heroes are closest
-                vector<int> hero_ids = { 0, 1, 2 };
-                sort(begin(hero_ids), end(hero_ids),
-                    [this, &threat](int hero_a, int hero_b) -> bool
-                    {
-                        const Entity& a = heroes[hero_a];
-                        const Entity& b = heroes[hero_b];
-                        int aDistToMonster = (a.position - threat.position).squared();
-                        int bDistToMonster = (b.position - threat.position).squared();
-                        return aDistToMonster < bDistToMonster;
-                    });
-
-                int attacks_to_eliminate = ((threat.health + HERO_DAMAGE - 1) / HERO_DAMAGE);
-
-                cerr << elapsed() << "Closest heroes to threat " << threat.id << " are:" << endl;
-                for (int i = 0; i < heroes.size(); i++)
-                    cerr << elapsed() << hero_ids[i] << endl;
-
-                for (int i = 0; i < heroes.size() && i < attacks_to_eliminate; i++) {
-                    const Point& p = findInterdictionPoint(heroes[hero_ids[i]], threat);
-                    cerr << elapsed() << "Assigning hero " << hero_ids[i] << " to attack threat at " << p << endl;
-                    actions[hero_ids[i]] = assignMoveAction(heroes[hero_ids[i]], p);
+            const auto& analysis = canThreatBeEliminated(threat);
+            if (analysis.first) {
+                cerr << elapsed() << "Only 1 threat.  Ordering required heroes (" << analysis.second.size() << ") to interdict." << endl;
+                for (int h : analysis.second) {
+                    const Entity& hero = heroes[h];
+                    const Point& p = findInterdictionPoint(hero, threat);
+                    cerr << elapsed() << "Assigning hero " << hero.id << " to attack threat at " << p << endl;
+                    actions[h] = assignMoveAction(hero, p);
                 }
-                if (attacks_to_eliminate >= heroes.size())
+                if (analysis.second.size() >= heroes.size())
                     return actions;
             }
             else {
@@ -642,9 +709,13 @@ struct EntityThreatList : RingList<vector<Entity>> {
     const Entity* findClosestMonsterInSegment(const Entity& hero, const vector<Entity>& monsters, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
-            if (monster.adjusted_health <= 0)
+            int distance = (hero.position - monster.position).distance();
+            int turns_to_reach = countTurnsToInterdict(monster, hero);
+            cerr << elapsed() << "Determined it will take hero " << hero.id << " " << turns_to_reach << " turns to reach monster " << monster.id << endl;
+            cerr << elapsed() << "And this monster (" << &monster << ") will have " << monster.healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
+            if (!monster.isAliveInNTurns(turns_to_reach))
                 continue;
-            int distance = (hero.position - monster.position).squared();
+
             if (closest == nullptr || distance < min_distance) {
                 closest = &monster;
                 min_distance = distance;
