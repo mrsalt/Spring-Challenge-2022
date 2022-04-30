@@ -370,12 +370,12 @@ enum class ActionType {
 
 class Action
 {
-    ActionType type;
 public:
+    const ActionType type;
+
     Action(ActionType t)
         : type(t) {}
     virtual string toString() = 0;
-    ActionType type() { return type; }
 };
 
 class WaitAction : public Action
@@ -881,7 +881,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         if (allActionsAreSet(actions)) return actions;
 
         // Shield against an enemy spellcaster
-        if (!turnsToReachBase.empty() && turnsToReachBase[0].second < 15 && opponent_stats.mana > 10 && my_stats.mana > 30) {
+        if (opponent_stats.mana > 10 && my_stats.mana > 30) { // !turnsToReachBase.empty() && turnsToReachBase[0].second < 15 && 
             for (int h = 0; h < heroes.size(); h++) {
                 auto hero = heroes[h];
                 if (hero->shield_life > 0)
@@ -1086,13 +1086,20 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         vector<Entity*> monstersToControl;
         for (auto& entity : monsters) {
             if (entity->type == EntityType::Monster && entity->shield_life == 0) {
-                for (auto& a : actions) {
-                    if (a && a->type() == ActionType::CONTROL && static_cast<ControlSpellAction*>(a.get())->targetId == entity->id)
-                        continue;
+                bool monsterIsControlled = entity->is_controlled;
+                if (!monsterIsControlled) {
+                    for (auto& a : actions) {
+                        if (a && a->type == ActionType::CONTROL && static_cast<ControlSpellAction*>(a.get())->targetId == entity->id) {
+                            monsterIsControlled = true;
+                            break;
+                        }
+                    }
                 }
-                int monsterDist = (hero.position - entity->position).distance();
-                if (entity->willTargetMyBase() && monsterDist > ATTACK_RADIUS&& monsterDist < CONTROL_SPELL_RANGE)
-                    monstersToControl.push_back(entity);
+                if (!monsterIsControlled) {
+                    int monsterDist = (hero.position - entity->position).distance();
+                    if (entity->willTargetMyBase() && monsterDist > ATTACK_RADIUS&& monsterDist < CONTROL_SPELL_RANGE)
+                        monstersToControl.push_back(entity);
+                }
             }
         }
         if (monstersToControl.empty())
