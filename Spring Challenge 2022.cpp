@@ -746,12 +746,20 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 }
             }
             else if (reachable_balls.size() > 0) {
-                Point target = reachable_balls[0]->futureEndPosition(t);
+                auto ball = reachable_balls[0];
+                Point target = ball->futureEndPosition(t);
                 for (int h = 0; h < heroes.size(); h++) {
                     auto hero = heroes[h];
                     Polar v(target, hero->position);
                     Point p1 = findNearestPointAlongVectorExceedingDistanceToTarget(v, target, hero->position, 1200);
-                    cerr << elapsed() << "Moving hero to " << p1 << " to prepare for a WIND action affecting " << reachable_balls[0]->id << " in " << t << " turn(s)." << endl;
+                    // Don't kill the ball early!  Back off if we're too close.
+                    int dist = (p1 - ball->position).distance();
+                    cerr << elapsed() << "Distance for hero " << h << " target (" << p1 << ") to " << ball->id << ":  " << dist << endl;
+                    if (dist < (ATTACK_RADIUS + 10)) {
+                        Polar v(ball->position, hero->position);
+                        p1 = findNearestPointAlongVectorExceedingDistanceToTarget(v, ball->position, hero->position, 1200);
+                    }
+                    cerr << elapsed() << "Moving hero to " << p1 << " to prepare for a WIND action affecting " << ball->id << " in " << t << " turn(s)." << endl;
                     actions[h] = make_unique<MoveAction>(p1);
                 }
                 return true;
@@ -1027,38 +1035,6 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         return monsterMap;
     }
 };
-
-/**
- * Auto-generated code below aims at helping you parse
- * the standard input according to the problem statement.
- **/
-
- /*
- void debug() {
-
-     for (int angle = 0; angle < 360; angle += 10) {
-         double theta = angle * 2.0 * M_PI / 360.0;
-         cerr << angle << ": x: " << (int)(cos(theta) * 100) << ", y: " << (int)(sin(theta) * 100) << endl;
-     }
-
-     Point b{ 0, 0 };
-     Point p1{ 10, 0 };
-     Point p15{ 10, 10 };
-     Point p2{ 0, 10 };
-     Point p25{ -10, 10 };
-     Point p3{ -10, 0 };
-     Point p35{ -10, -10 };
-     Point p4{ 0, -10 };
-     Point p45{ 10, -10 };
-     cerr << Polar(b, p1) << endl;
-     cerr << Polar(b, p15) << endl;
-     cerr << Polar(b, p2) << endl;
-     cerr << Polar(b, p25) << endl;
-     cerr << Polar(b, p3) << endl;
-     cerr << Polar(b, p35) << endl;
-     cerr << Polar(b, p4) << endl;
-     cerr << Polar(b, p45) << endl;
- }*/
 
 void init_top_left(PlayerStats& stats) {
     stats.start_angle = 0;
