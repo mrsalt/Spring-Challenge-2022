@@ -756,9 +756,10 @@ struct EntityThreatList : RingList<vector<Entity*>> {
     map<int, vector<Point>> findBestLocationsToPlaceDefenders(Segment<vector<Entity*>>& segment, Ring<vector<Entity*>>& ring) {
         const int attack_squared = ATTACK_RADIUS * ATTACK_RADIUS;
 
-        int ringsToTrack = 6;
+        int ringsToTrack = 8;
+        int segments = 8;
         int ringDistance = (ring.outerDistance - ring.innerDistance) / ringsToTrack;
-        RingList<int> reachableMonsters(center, ring.innerDistance, ringDistance, ringsToTrack, 6, segment.startAngle, segment.endAngle);
+        RingList<int> reachableMonsters(center, ring.innerDistance, ringDistance, ringsToTrack, segments, segment.startAngle, segment.endAngle);
 
         cerr << elapsed() << "Finding points that reach the most monsters" << endl;
 
