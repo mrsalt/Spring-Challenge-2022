@@ -1038,7 +1038,23 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         for (auto entity : monstersToControl) {
             cerr << *entity << endl;
         }
-        return make_unique<ControlSpellAction>(*monstersToControl[0], opponent_stats.base);
+        return make_unique<ControlSpellAction>(*monstersToControl[0], alternatingPointAlongOpponentBase());
+    }
+
+    Point alternatingPointAlongOpponentBase() {
+        static int controlCount = 0;
+        double angle;
+        if (controlCount % 2 == 0) {
+            angle = opponent_stats.start_angle + (M_PI_2 / 40.0);
+        }
+        else {
+            angle = opponent_stats.end_angle - (M_PI_2 / 40.0);
+        }
+
+        controlCount++;
+        //cerr << elapsed() << "Sending spider to " << Polar(BASE_RADIUS, angle) << " (angle: " << angle << ") which is " << Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base) << " (opponent base start/end angles are: " << opponent_stats.start_angle << " (" << radiansToDegrees(opponent_stats.start_angle) << "), " << opponent_stats.end_angle << " (" << radiansToDegrees(opponent_stats.end_angle) << "))" << endl;
+        //cerr << elapsed() << "  sin(angle) * radius = " << sin(angle) * BASE_RADIUS << endl;
+        return Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base);
     }
 
     void findMonstersReachableFromPointsInSegments(map<int, vector<int>>& segmentsWithMonsters, Ring<vector<Entity*>>& ring, map<Point, int>& monstersAttackedAtPoint, vector<unique_ptr<Action>>& actions, vector<set<Point>>& pointsReachableByHeroes)
