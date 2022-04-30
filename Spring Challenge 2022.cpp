@@ -231,8 +231,8 @@ struct Entity
     EntityType type; // 0=monster, 1=your hero, 2=opponent hero
     Point position; // Position of this entity
     Polar polar;
-    int shield_life; // Ignore for this league; Count down until shield spell fades
-    int is_controlled; // Ignore for this league; Equals 1 when this entity is under a control spell
+    int shield_life; // Count down until shield spell fades
+    int is_controlled; // Equals 1 when this entity is under a control spell
     int health; // Remaining health of this monster
     vector<int> adjusted_health;
     Delta velocity; // Trajectory of this monster
@@ -505,6 +505,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     vector<Entity*> threats;
     vector<Entity*> heroes;
     vector<Entity*> monsters;
+    vector<Entity*> opposing_heroes;
     const PlayerStats my_stats;
     const PlayerStats opponent_stats;
     vector<pair<Entity*, int>> turnsToReachBase;
@@ -515,6 +516,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             heroes.push_back(e);
         }
         else if (e->type == EntityType::OpponentHero) {
+            opposing_heroes.push_back(e);
         }
         else {
             monsters.push_back(e);
@@ -646,7 +648,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         throw exception();
     }
 
-    void calculateTurnsUntilILose() {
+    void calculateTurnsUntilIMonstersAttack() {
         if (my_stats.health > threats.size()) {
             turnsUntilILose = 50;
             return;
@@ -826,13 +828,25 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         throw exception();
     }
 
+    bool allActionsAreSet(const vector<unique_ptr<Action>>& actions) {
+        if (actions.empty())
+            return false;
+        for (auto& action : actions) {
+            if (!action)
+                return false;
+        }
+        return true;
+    }
+
     vector<unique_ptr<Action>> determineActions() {
         cerr << elapsed() << "Determining actions to take" << endl;
 
-        calculateTurnsUntilILose();
+        calculateTurnsUntilIMonstersAttack();
         cerr << elapsed() << "Turns until I lose (without attacking threats): " << turnsUntilILose << endl;
 
         vector<unique_ptr<Action>> actions(heroes.size());
+
+        if (allActionsAreSet(actions)) return actions;
 
         if (turnsUntilILose < 8 && my_stats.mana > 30) {
             // which hero is closest to my base?
@@ -846,6 +860,25 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             actions[closest[0].first] = make_unique<WindSpellAction>(opponent_stats.base);
         }
 
+        if (allActionsAreSet(actions)) return actions;
+
+        // Shield against an enemy spellcaster
+        if (!turnsToReachBase.empty() && turnsToReachBase[0].second < 15 && opponent_stats.mana > 10 && my_stats.mana > 30) {
+            for (int h = 0; h < heroes.size(); h++) {
+                auto hero = heroes[h];
+                if (hero->shield_life > 0)
+                    continue;
+                for (int j = 0; j < opposing_heroes.size(); j++) {
+                    auto opponent = opposing_heroes[j];
+                    if ((opponent->position - hero->position).distance() < CONTROL_SPELL_RANGE + HERO_TRAVEL) {
+                        actions[h] = make_unique<ShieldSpellAction>(*hero);
+                    }
+                }
+            }
+        }
+
+        if (allActionsAreSet(actions)) return actions;
+
         //if (windAttackIsPossible(actions)) {
         //    return actions;
         //}
@@ -853,7 +886,8 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         if (monsters.empty()) {
             cerr << elapsed() << "No monsters.  Ordering all heroes to default locations." << endl;
             for (int h = 0; h < heroes.size(); h++) {
-                actions[h] = assignMoveAction(*heroes[h], default_hero_location[h]);
+                if (!actions[h])
+                    actions[h] = assignMoveAction(*heroes[h], default_hero_location[h]);
             }
             return actions;
         }
@@ -990,7 +1024,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     unique_ptr<ControlSpellAction> findMonsterToControl(const Entity& hero) {
         vector<Entity*> monstersToControl;
         for (auto& entity : monsters) {
-            if (entity->type == EntityType::Monster) {
+            if (entity->type == EntityType::Monster && entity->shield_life == 0) {
                 int monsterDist = (hero.position - entity->position).distance();
                 if (entity->willTargetMyBase() && monsterDist > ATTACK_RADIUS&& monsterDist < CONTROL_SPELL_RANGE)
                     monstersToControl.push_back(entity);
