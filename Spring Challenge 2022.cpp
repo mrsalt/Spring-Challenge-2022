@@ -437,6 +437,7 @@ private:
 template <typename T>
 struct Ring {
     vector<Segment<T>> segmentList;
+    T data;
     int innerDistance;
     int outerDistance;
     int threatCount;
@@ -526,8 +527,9 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             for (int i = 0; i < rings.size(); i++) {
                 if (e->polar.dist < rings[i].outerDistance) {
                     auto& ring = rings[i];
-                    cerr << elapsed() << "Monster " << e->id << " (distance: " << e->polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << ")" << endl;
+                    ring.data.push_back(e);
                     int segmentNum = (e->polar.theta - startAngle) / segmentArc;
+                    cerr << elapsed() << "Monster " << e->id << " (distance: " << e->polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << "), segment: " << segmentNum << endl;
                     //cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e->polar: " << e->polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
                     auto& segment = ring.segmentList[segmentNum];
                     segment.data.push_back(e);
@@ -972,17 +974,24 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 for (int r = 0; r < rings.size(); r++) {
                     Ring<vector<Entity*>>& ring = rings[r];
                     int min_distance;
-                    const Entity* closest = findClosestMonsterInSegment(*heroes[h], ring.segmentList[h].data, min_distance);
-                    if (closest == nullptr) {
-                        for (int s = 0; s < ring.segmentList.size(); s++) {
-                            if (s == h)
-                                continue; // we examined this segment first
-                            closest = findClosestMonsterInSegment(*heroes[h], ring.segmentList[s].data, min_distance, closest);
+                    const Entity* closest;
+                    if (r == 0) {
+                        // In ring 0 we don't care about segments.
+                        if (!turnsToReachBase.empty() && turnsToReachBase[0].second < 6) {
+                            closest = turnsToReachBase[0].first;
                         }
+                        else {
+                            closest = findClosestMonster(*heroes[h], ring.data, min_distance);
+                        }
+                    }
+                    else {
+                        closest = findClosestMonster(*heroes[h], ring.segmentList[h].data, min_distance);
+                        if (closest == nullptr)
+                            closest = findClosestMonster(*heroes[h], ring.data, min_distance, closest);
                     }
                     if (closest != nullptr) {
                         placement = closest->position;
-                        cerr << elapsed() << "Assigning hero " << h << " to the closest monster in ring " << r << " (" << placement << ")" << "\n";
+                        cerr << elapsed() << "Assigning hero " << h << " to the closest monster " << closest->id <<" in ring " << r << " (" << placement << ")" << "\n";
                         break;
                     }
                     else if (r == rings.size() - 1) {
@@ -1093,7 +1102,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         }
     }
 
-    const Entity* findClosestMonsterInSegment(const Entity& hero, const vector<Entity*>& monsters, int& min_distance, const Entity* closest = nullptr)
+    const Entity* findClosestMonster(const Entity& hero, const vector<Entity*>& monsters, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
             int distance = (hero.position - monster->position).distance();
