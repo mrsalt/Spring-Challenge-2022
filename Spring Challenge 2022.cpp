@@ -29,9 +29,12 @@ const int HERO_TRAVEL = 800;
 const int MONSTER_TRAVEL = 400;
 const int HERO_TRAVEL_SQUARED = HERO_TRAVEL * HERO_TRAVEL;
 const int HERO_DAMAGE = 2; // heroes do 2 points of damage to nearby enemies
+const int WIND_SPELL_RANGE = 1280;
+const int WIND_DISTANCE = 2200;
 
 const int RIGHT_EDGE = 17630;
 const int BOTTOM_EDGE = 9000;
+int heroes_per_player; // Always 3
 
 int radiansToDegrees(double radians) {
     return (radians * 360.0 / (2 * M_PI)) + 0.5;
@@ -100,6 +103,10 @@ struct Point
     int x;
     int y;
 
+    static Point middle(const Point& a, const Point& b) {
+        return { (a.x + b.x) / 2, (a.y + b.y) / 2 };
+    }
+
     Point& operator =(const Point& other) {
         x = other.x;
         y = other.y;
@@ -147,6 +154,7 @@ struct Point
 };
 
 vector<Point> default_hero_location;
+vector<Point> default_attack_position;
 
 struct Polar
 {
@@ -199,6 +207,15 @@ struct Polar
 
     Point toPoint(const Point& center) const {
         return center + toDelta();
+    }
+
+    Polar rotate(double rad) const {
+        double new_theta = theta + rad;
+        if (new_theta < 0)
+            new_theta += 2.0 * M_PI;
+        else if (new_theta > 2.0 * M_PI)
+            new_theta -= 2.0 * M_PI;
+        return Polar(dist, new_theta);
     }
 
     friend ostream& operator << (ostream& out, const Polar& c) {
@@ -288,6 +305,10 @@ struct Entity
         return position + (velocity * turns);
     }
 
+    Point futureEndPosition(int turns) const {
+        return position + (velocity * (turns + 1));
+    }
+
     friend istream& operator >> (istream& in, Entity& c) {
         int entityType;
         in >> c.id >> entityType;
@@ -323,6 +344,9 @@ struct Entity
 struct PlayerStats {
     int health;
     int mana;
+    Point base;
+    double start_angle;
+    double end_angle;
 
     friend istream& operator >> (istream& in, PlayerStats& c) {
         in >> c.health >> c.mana; cin.ignore();
@@ -469,8 +493,8 @@ Point findInterdictionPoint(const Entity& hero, const Entity& threat) {
 
 struct ActionCalculator : RingList<vector<Entity*>> {
 
-    ActionCalculator(const PlayerStats& my_stats, const PlayerStats& opponent_stats, const Point& base, int initialDistance, int ringDistance, int ringsToTrack, int segments, double startAngle, double endAngle)
-        : RingList<vector<Entity*>>(base, initialDistance, ringDistance, ringsToTrack, segments, startAngle, endAngle)
+    ActionCalculator(const PlayerStats& my_stats, const PlayerStats& opponent_stats, int initialDistance, int ringDistance, int ringsToTrack, int segments, double startAngle, double endAngle)
+        : RingList<vector<Entity*>>(my_stats.base, initialDistance, ringDistance, ringsToTrack, segments, startAngle, endAngle)
         , my_stats(my_stats)
         , opponent_stats(opponent_stats)
     {
@@ -483,6 +507,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     const PlayerStats my_stats;
     const PlayerStats opponent_stats;
     vector<pair<Entity*, int>> turnsToReachBase;
+    int turnsUntilILose;
 
     void placeEntity(Entity* e) {
         if (e->type == EntityType::Hero) {
@@ -611,9 +636,11 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         throw exception();
     }
 
-    int calculateTurnsUntilILose() {
-        if (my_stats.health > threats.size())
-            return 50;
+    void calculateTurnsUntilILose() {
+        if (my_stats.health > threats.size()) {
+            turnsUntilILose = 50;
+            return;
+        }
         for (auto threat : threats) {
             turnsToReachBase.push_back(make_pair(threat, calculateTurnsToReachBase(*threat)));
         }
@@ -622,16 +649,171 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         for (pair<Entity*, int> p : turnsToReachBase) {
             cerr << elapsed() << "  Entity ID: " << p.first->id << ", Turns: " << p.second << endl;
         }
-        return turnsToReachBase[my_stats.health - 1].second;
+        turnsUntilILose = turnsToReachBase[my_stats.health - 1].second;
+    }
+
+    bool windAttackIsPossible(vector<unique_ptr<Action>>& actions) {
+        if (my_stats.mana < 30 * opponent_stats.health)
+            return false;
+
+        const int wind_attack_distance = WIND_DISTANCE * 3 + 200;
+        // can I cast WIND right now and send monsters in?
+        map<const Entity*, vector<int>> blow_distance;
+
+        for (int h = 0; h < heroes.size(); h++) {
+            const Entity& hero = *heroes[h];
+            for (auto opponent_threat : monsters) {
+                Polar p(opponent_stats.base, opponent_threat->position);
+                if (p.dist < wind_attack_distance) {
+                    if ((hero.position - opponent_threat->position).distance() < WIND_SPELL_RANGE) {
+                        blow_distance[opponent_threat].push_back(h);
+                    }
+                }
+            }
+        }
+
+        if (!blow_distance.empty()) {
+            for (auto& pair : blow_distance) {
+                if (pair.second.size() == heroes.size()) {
+                    for (int h : pair.second) {
+                        cerr << elapsed() << "Casting wind attack!!" << endl;
+                        actions[h] = make_unique<WindSpellAction>(opponent_stats.base);
+                    }
+                    return true;
+                }
+            }
+        }
+
+        // are there monsters clustered together (or not) that I can push towards my opponents base?
+        int turns_to_project = 5;
+
+        for (int t = 0; t < turns_to_project; t++) {
+            vector<Entity*> soccer_balls;
+            for (auto opponent_threat : monsters) {
+                Polar p(opponent_stats.base, opponent_threat->futurePosition(t));
+                if (p.dist < wind_attack_distance && opponent_threat->health > t* HERO_DAMAGE) {
+                    soccer_balls.push_back(opponent_threat);
+                }
+            }
+            // are there any soccer balls that all 3 of my heroes can get close to the 'end' position of in 't' turns?
+            vector<Entity*> reachable_balls;
+            for (auto ball : soccer_balls) {
+                Point endPosition = ball->futureEndPosition(t);
+                bool reachable = true;
+                for (int h = 0; h < heroes.size(); h++) {
+                    int toTravel = ((heroes[h]->position - endPosition).distance() - WIND_SPELL_RANGE);
+                    if (toTravel > (t + 1)* HERO_TRAVEL) {
+                        reachable = false;
+                        break;
+                    }
+                }
+                if (reachable) {
+                    reachable_balls.push_back(ball);
+                }
+            }
+            if (reachable_balls.size() > 1) {
+                // if we can reach more than 1, let's find the 2 that are closest to reach other.
+                pair<Entity*, Entity*> closest = { nullptr, nullptr };
+                int min_distance;
+                for (auto a : reachable_balls) {
+                    for (auto b : reachable_balls) {
+                        if (a == b)
+                            continue;
+                        int dist = (a->futureEndPosition(t) - b->futureEndPosition(t)).distance();
+                        if (closest.first == nullptr || dist < min_distance) {
+                            min_distance = dist;
+                            closest.first = a;
+                            closest.second = b;
+                        }
+                    }
+                }
+                // We can get two in one shot... maybe.
+                if (min_distance < (WIND_SPELL_RANGE * 2) - 50) {
+                    Point a = closest.first->futureEndPosition(t);
+                    Point b = closest.second->futureEndPosition(t);
+                    Point c = Point::middle(a, b);
+                    Polar v(c, a);
+                    Polar v1 = v.rotate(M_PI_2);
+                    Polar v2 = v.rotate(-M_PI_2);
+                    Point p1 = findNearestPointAlongVectorExceedingDistanceToTarget(v1, c, a, 1200);
+                    Point p2 = findNearestPointAlongVectorExceedingDistanceToTarget(v2, c, a, 1200);
+                    Point target = maxDistance(p1, heroes) < maxDistance(p2, heroes) ? p1 : p2;
+                    // Hopefully the monsters are not killed along the way to get close to them!
+                    cerr << elapsed() << "Moving heroes to " << target << " to prepare for a WIND action affecting " << closest.first->id << " and " << closest.second->id << " in " << t << " turn(s)." << endl;
+                    for (int h = 0; h < heroes.size(); h++)
+                        actions[h] = make_unique<MoveAction>(target);
+                    return true;
+                }
+            }
+            else if (reachable_balls.size() > 0) {
+                Point target = reachable_balls[0]->futureEndPosition(t);
+                for (int h = 0; h < heroes.size(); h++) {
+                    auto hero = heroes[h];
+                    Polar v(target, hero->position);
+                    Point p1 = findNearestPointAlongVectorExceedingDistanceToTarget(v, target, hero->position, 1200);
+                    cerr << elapsed() << "Moving hero to " << p1 << " to prepare for a WIND action affecting " << reachable_balls[0]->id << " in " << t << " turn(s)." << endl;
+                    actions[h] = make_unique<MoveAction>(p1);
+                }
+                return true;
+            }
+        }
+
+        cerr << elapsed() << "No known enemies to WIND attack currently, moving towards SCOUT positions" << endl;
+        int minDist = -1;
+        for (int h_offset = 0; h_offset < heroes.size(); h_offset++) {
+            for (int p_offset = 0; p_offset < default_attack_position.size(); p_offset++) {
+                int h1 = (0 + h_offset) % 3;
+                int h2 = (1 + h_offset) % 3;
+                int h3 = (2 + h_offset) % 3;
+                Point p1 = default_attack_position[(0 + p_offset) % 3];
+                Point p2 = default_attack_position[(1 + p_offset) % 3];
+                Point p3 = default_attack_position[(2 + p_offset) % 3];
+                int d[] = { (heroes[h1]->position - p1).squared(), (heroes[h2]->position - p2).squared(), (heroes[h3]->position - p3).squared() };
+                int maxD = *max_element(begin(d), end(d));
+                if (minDist == -1 || maxD < minDist) {
+                    actions[h1] = make_unique<MoveAction>(p1);
+                    actions[h2] = make_unique<MoveAction>(p2);
+                    actions[h3] = make_unique<MoveAction>(p3);
+                }
+            }
+        }
+        return true;
+    }
+
+    int maxDistance(const Point& p, const vector<Entity*>& entities) {
+        int maxD = 0;
+        for (auto e : entities) {
+            int dist = (e->position - p).distance();
+            if (dist > maxD) {
+                maxD = dist;
+            }
+        }
+        return maxD;
+    }
+
+    Point findNearestPointAlongVectorExceedingDistanceToTarget(Polar& vector, Point& center, Point& target, int distance)
+    {
+        for (int d = 10; d < distance * 2; d += 10) {
+            Point candidate = Polar(d, vector.theta).toPoint(center);
+            if ((candidate - target).distance() > distance) {
+                return candidate;
+            }
+        }
+        cerr << elapsed() << "Unable to find nearest point!  (Line " << __LINE__ << ")" << endl;
+        throw exception();
     }
 
     vector<unique_ptr<Action>> determineActions() {
         cerr << elapsed() << "Determining actions to take" << endl;
 
-        int turnsRemaining = calculateTurnsUntilILose();
-        cerr << elapsed() << "Turns until I lose (without attacking threats): " << turnsRemaining << endl;
+        calculateTurnsUntilILose();
+        cerr << elapsed() << "Turns until I lose (without attacking threats): " << turnsUntilILose << endl;
 
         vector<unique_ptr<Action>> actions(heroes.size());
+
+        if (windAttackIsPossible(actions)) {
+            return actions;
+        }
 
         if (monsters.empty()) {
             cerr << elapsed() << "No monsters.  Ordering all heroes to default locations." << endl;
@@ -878,66 +1060,94 @@ struct ActionCalculator : RingList<vector<Entity*>> {
      cerr << Polar(b, p45) << endl;
  }*/
 
-void find_default_hero_placements(Point& base, int heroes_per_player, double& start_angle, double& end_angle)
+void init_top_left(PlayerStats& stats) {
+    stats.start_angle = 0;
+    stats.end_angle = M_PI_2;
+    stats.base = { 0, 0 };
+}
+
+void init_top_right(PlayerStats& stats) {
+    stats.start_angle = M_PI_2;
+    stats.end_angle = M_PI;
+    stats.base = { RIGHT_EDGE, 0 };
+}
+
+void init_bottom_right(PlayerStats& stats) {
+    stats.start_angle = M_PI;
+    stats.end_angle = M_PI * 3.0 / 2.0;
+    stats.base = { RIGHT_EDGE, BOTTOM_EDGE };
+}
+
+void init_bottom_left(PlayerStats& stats) {
+    stats.start_angle = M_PI * 3.0 / 2.0;
+    stats.end_angle = M_PI * 2.0;
+    stats.base = { 0, BOTTOM_EDGE };
+}
+
+
+void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_stats)
 {
-    if (base.x == 0 && base.y == 0) {
+    if (my_stats.base.x == 0 && my_stats.base.y == 0) {
         cerr << "Base is top left corner" << endl;
-        start_angle = 0;
-        end_angle = M_PI_2;
+        init_top_left(my_stats);
+        init_bottom_right(opponent_stats);
     }
-    else if (base.x == RIGHT_EDGE && base.y == 0) {
+    else if (my_stats.base.x == RIGHT_EDGE && my_stats.base.y == 0) {
         cerr << "Base is top right corner" << endl;
-        start_angle = M_PI_2;
-        end_angle = M_PI;
+        init_top_right(my_stats);
+        init_bottom_left(opponent_stats);
     }
-    else if (base.x == RIGHT_EDGE && base.y == BOTTOM_EDGE) {
+    else if (my_stats.base.x == RIGHT_EDGE && my_stats.base.y == BOTTOM_EDGE) {
         cerr << "Base is bottom right corner" << endl;
-        start_angle = M_PI;
-        end_angle = M_PI * 3.0 / 2.0;
+        init_bottom_right(my_stats);
+        init_top_left(opponent_stats);
     }
-    else if (base.x == 0 && base.y == BOTTOM_EDGE) {
+    else if (my_stats.base.x == 0 && my_stats.base.y == BOTTOM_EDGE) {
         cerr << "Base is bottom left corner" << endl;
-        start_angle = M_PI * 3.0 / 2.0;
-        end_angle = M_PI * 2.0;
+        init_bottom_left(my_stats);
+        init_top_right(opponent_stats);
     }
     else {
-        cerr << "Base is not in corner" << endl;
-        start_angle = 0.0;
-        end_angle = M_PI * 2.0;
+        cerr << "Base is not in corner!" << endl;
+        throw exception();
     }
 
-    cerr << "Base defense start angle: " << radiansToDegrees(start_angle) << ", end angle: " << radiansToDegrees(end_angle) << endl;
+    cerr << "Base defense start angle: " << radiansToDegrees(my_stats.start_angle) << ", end angle: " << radiansToDegrees(my_stats.end_angle) << endl;
 
-    double defender_arc = (end_angle - start_angle) / heroes_per_player;
-    double current = start_angle + defender_arc / 2.0;
+    double defender_arc = (my_stats.end_angle - my_stats.start_angle) / heroes_per_player;
+    double current = my_stats.start_angle + defender_arc / 2.0;
     for (int i = 0; i < heroes_per_player; i++) {
-        Point p = Polar(BASE_RADIUS + HERO_TRAVEL, current).toPoint(base);
+        Point p = Polar(BASE_RADIUS + HERO_TRAVEL, current).toPoint(my_stats.base);
         cerr << "Default hero position[" << i << "]: " << p << endl;
         default_hero_location.push_back(p);
         current += defender_arc;
+    }
+
+    current = opponent_stats.start_angle + defender_arc;
+    for (int i = 0; i < heroes_per_player; i++) {
+        Point p = Polar(BASE_RADIUS + HERO_TRAVEL * 3, current).toPoint(opponent_stats.base);
+        default_attack_position.push_back(p);
+        current += defender_arc / 2;
     }
 }
 
 int main()
 {
     start = Clock::now();
-    Point base; // The corner of the map representing your base
-    cin >> base; cin.ignore();
-    cerr << elapsed() << "Base: " << base << endl;
+    PlayerStats my_stats;
+    PlayerStats opponent_stats;
+    cin >> my_stats.base; cin.ignore();
+    cerr << elapsed() << "Base: " << my_stats.base << endl;
 
-    int heroes_per_player; // Always 3
     cin >> heroes_per_player; cin.ignore();
     cerr << elapsed() << "Heroes: " << heroes_per_player << endl;
 
-    double start_angle, end_angle;
-    find_default_hero_placements(base, heroes_per_player, start_angle, end_angle);
+    find_default_hero_placements(my_stats, opponent_stats);
 
     int turn_count = 0;
     // game loop
     while (1) {
         turn_count++;
-        PlayerStats my_stats;
-        PlayerStats opponent_stats;
         cin >> my_stats;
         start = Clock::now();
         cerr << elapsed() << "Turn: " << turn_count << endl;
@@ -951,13 +1161,13 @@ int main()
         cerr << elapsed() << "Entity Count: " << entity_count << endl;
         vector<Entity> entities(entity_count);
 
-        ActionCalculator calculator(my_stats, opponent_stats, base, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, start_angle, end_angle);
+        ActionCalculator calculator(my_stats, opponent_stats, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, my_stats.start_angle, my_stats.end_angle);
 
         cerr << elapsed() << "Reading entities" << endl;
         for (int i = 0; i < entity_count; i++) {
             Entity& entity = entities[i];
             cin >> entity;
-            entity.polar = Polar(base, entity.position);
+            entity.polar = Polar(my_stats.base, entity.position);
 
             //if (entity.targettingMyBase() || entity.willTargetMyBase())
             //    cerr << elapsed() << "Entity[" << i << "]: " << entity << endl;
