@@ -510,6 +510,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     const PlayerStats my_stats;
     const PlayerStats opponent_stats;
     vector<pair<Entity*, int>> turnsToReachBase;
+    vector<Entity*> top_threats;
     int turnsUntilILose;
 
     void placeEntity(Entity* e) {
@@ -661,6 +662,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         sort(begin(turnsToReachBase), end(turnsToReachBase), [](const auto& a, const auto& b) -> bool { return a.second < b.second; });
         cerr << elapsed() << "Turns to reach base: " << endl;
         for (pair<Entity*, int> p : turnsToReachBase) {
+            top_threats.push_back(p.first);
             cerr << elapsed() << "  Entity ID: " << p.first->id << ", Turns: " << p.second << endl;
         }
         turnsUntilILose = turnsToReachBase[my_stats.health - 1].second;
@@ -973,26 +975,43 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             else {
                 for (int r = 0; r < rings.size(); r++) {
                     Ring<vector<Entity*>>& ring = rings[r];
-                    int min_distance;
-                    const Entity* closest;
-                    if (r == 0) {
-                        // In ring 0 we don't care about segments.
-                        if (!turnsToReachBase.empty() && turnsToReachBase[0].second < 6) {
-                            closest = turnsToReachBase[0].first;
+
+                    vector<Entity*> closest = findClosestMonsters(*heroes[h], ring.data);
+                    if (!closest.empty()) {
+                        bool canReachMultiple = false;
+                        for (int m = min(4, (int)closest.size()); m > 0; m--) {
+                            Point p = getMiddle(closest, m);
+                            int reached = monstersReachedFrom(p);
+                            if (reached >= m) {
+                                placement = p;
+                                canReachMultiple = true;
+                                cerr << elapsed() << "Assigning hero " << h << " to location where it hits multiple monsters (" << reached << ") in ring " << r << " (" << placement << ")" << "\n";
+                                break;
+                            }
+                        }
+                        if (canReachMultiple)
+                            break;
+                        int min_distance;
+                        const Entity* closest;
+                        if (r == 0) {
+                            // In ring 0 we don't care about segments.
+                            if (!turnsToReachBase.empty() && turnsToReachBase[0].second < 6) {
+                                closest = turnsToReachBase[0].first;
+                            }
+                            else {
+                                closest = findClosestMonster(*heroes[h], ring.data, min_distance);
+                            }
                         }
                         else {
-                            closest = findClosestMonster(*heroes[h], ring.data, min_distance);
+                            closest = findClosestMonster(*heroes[h], ring.segmentList[h].data, min_distance);
+                            if (closest == nullptr)
+                                closest = findClosestMonster(*heroes[h], ring.data, min_distance, closest);
                         }
-                    }
-                    else {
-                        closest = findClosestMonster(*heroes[h], ring.segmentList[h].data, min_distance);
-                        if (closest == nullptr)
-                            closest = findClosestMonster(*heroes[h], ring.data, min_distance, closest);
-                    }
-                    if (closest != nullptr) {
-                        placement = closest->position;
-                        cerr << elapsed() << "Assigning hero " << h << " to the closest monster " << closest->id <<" in ring " << r << " (" << placement << ")" << "\n";
-                        break;
+                        if (closest != nullptr) {
+                            placement = closest->position;
+                            cerr << elapsed() << "Assigning hero " << h << " to the closest monster " << closest->id << " in ring " << r << " (" << placement << ")" << "\n";
+                            break;
+                        }
                     }
                     else if (r == rings.size() - 1) {
                         placement = default_hero_location[h];
@@ -1010,6 +1029,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 actions[h] = make_unique<WaitAction>();
             }
             else if (potentialReached == currentReached && my_stats.mana > 20) {
+                // do control actions work inside my base?
                 cerr << elapsed() << "Searching for monster to control" << endl;
                 actions[h] = findMonsterToControl(*heroes[h]);
             }
@@ -1018,6 +1038,22 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             }
         }
         return actions;
+    }
+
+    Point getMiddle(vector<Entity*> monsters, int count) {
+        Point p{ 0, 0 };
+        count = min((int)monsters.size(), count);
+        if (count == 0) {
+            cerr << "Error: can't find middle of an empty list!" << endl;
+            throw exception();
+        }
+        for (int i = 0; i < count; i++) {
+            p.x += monsters[i]->position.x;
+            p.y += monsters[i]->position.y;
+        }
+        p.x = p.x / count;
+        p.x = p.y / count;
+        return p;
     }
 
     int monstersReachedFrom(const Point& p) {
@@ -1100,6 +1136,21 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             }
             cerr << elapsed() << "Done examining group of segments " << endl;
         }
+    }
+
+    vector<Entity*> findClosestMonsters(const Entity& hero, const vector<Entity*>& monsters)
+    {
+        vector<Entity*> closest = monsters;
+        sort(begin(closest), end(closest), [&hero](const auto& a, const auto& b) -> bool {
+            int aDistance = (hero.position - a->position).distance();
+            int bDistance = (hero.position - b->position).distance();
+            return aDistance < bDistance;
+            });
+        cerr << elapsed() << "Closest monsters" << endl;
+        for (auto e : closest) {
+            cerr << elapsed() << "  " << e->id << ", dist: " << (hero.position - e->position).distance() << endl;
+        }
+        return closest;
     }
 
     const Entity* findClosestMonster(const Entity& hero, const vector<Entity*>& monsters, int& min_distance, const Entity* closest = nullptr)
