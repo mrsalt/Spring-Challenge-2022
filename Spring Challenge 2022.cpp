@@ -282,10 +282,10 @@ struct Entity
             }
         }
         cerr << elapsed() << "Hero " << hero.id << " will cause damage to monster " << id << ".  Current health: " << health << endl;
-        cerr << elapsed() << "  Projected health: " << endl;
-        for (int i = 0; i < adjusted_health.size(); i++) {
-            cerr << elapsed() << "    turn[" << i << "] = " << adjusted_health[i] << endl;
-        }
+        //cerr << elapsed() << "  Projected health: " << endl;
+        //for (int i = 0; i < adjusted_health.size(); i++) {
+        //    cerr << elapsed() << "    turn[" << i << "] = " << adjusted_health[i] << endl;
+        //}
     }
 
     bool isAliveInNTurns(int turns) const {
@@ -595,10 +595,10 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         // How many turns until it can damage this location?
         int turns_to_damage = distance / HERO_TRAVEL;
 
-        if (hero.position != p) {
-            cerr << elapsed() << "hero moving from " << hero.position << " to " << p << endl;
-            cerr << elapsed() << "turns_to_damage(" << turns_to_damage << ") = distance(" << distance << ") / HERO_TRAVEL(" << HERO_TRAVEL << ")" << endl;
-        }
+        //if (hero.position != p) {
+        //    cerr << elapsed() << "hero moving from " << hero.position << " to " << p << endl;
+        //    cerr << elapsed() << "turns_to_damage(" << turns_to_damage << ") = distance(" << distance << ") / HERO_TRAVEL(" << HERO_TRAVEL << ")" << endl;
+        //}
 
         for (Entity* threat : threats) {
             Point actualLocation = hero.position;
@@ -614,7 +614,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
                 Point fp = threat->futurePosition(t);
                 int distanceToThreat = (fp - actualLocation).distance();
-                cerr << elapsed() << "threat future position[" << t << "] = " << fp << ", hero location = " << actualLocation << ", distanceToThreat = " << distanceToThreat << endl;
+                //cerr << elapsed() << "threat future position[" << t << "] = " << fp << ", hero location = " << actualLocation << ", distanceToThreat = " << distanceToThreat << endl;
                 if (distanceToThreat <= ATTACK_RADIUS) {
                     threat->damage(hero, t);
                     break;
@@ -834,6 +834,18 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
+        if (turnsUntilILose < 8 && my_stats.mana > 30) {
+            // which hero is closest to my base?
+            vector<pair<int, int>> closest;
+            for (int h = 0; h < heroes.size(); h++) {
+                int distance = (heroes[h]->position - my_stats.base).distance();
+                closest.push_back(make_pair(h, distance));
+            }
+            sort(begin(closest), end(closest), [](const auto& a, const auto& b) -> bool { return a.second < b.second; });
+            cerr << elapsed() << "Assigning wind action for defensive purposes" << endl;
+            actions[closest[0].first] = make_unique<WindSpellAction>(opponent_stats.base);
+        }
+
         //if (windAttackIsPossible(actions)) {
         //    return actions;
         //}
@@ -955,7 +967,8 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 actions[h] = make_unique<WaitAction>();
             }
             else if (potentialReached == currentReached && my_stats.mana > 20) {
-                unique_ptr<Action> controlSpell = findMonsterToControl(*heroes[h]);
+                cerr << elapsed() << "Searching for monster to control" << endl;
+                actions[h] = findMonsterToControl(*heroes[h]);
             }
             if (!actions[h]) {
                 actions[h] = assignMoveAction(*heroes[h], placement);
