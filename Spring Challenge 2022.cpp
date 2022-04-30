@@ -1183,6 +1183,7 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
     }
 }
 
+// in Silver League now
 int main()
 {
     start = Clock::now();
