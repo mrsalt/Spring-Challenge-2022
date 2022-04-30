@@ -21,10 +21,12 @@ string elapsed() {
 }
 
 const int BASE_RADIUS = 5000;
+const int BASE_DAMAGE_RADIUS = 300;
 const int RING_SIZE = 2400;
 const int ATTACK_RADIUS = 800;
 const int ATTACK_SQUARED = ATTACK_RADIUS * ATTACK_RADIUS;
 const int HERO_TRAVEL = 800;
+const int MONSTER_TRAVEL = 400;
 const int HERO_TRAVEL_SQUARED = HERO_TRAVEL * HERO_TRAVEL;
 const int HERO_DAMAGE = 2; // heroes do 2 points of damage to nearby enemies
 
@@ -261,7 +263,7 @@ struct Entity
                 }
             }
         }
-        cerr << elapsed() << "Hero " << hero.id << " will cause damage to monster " << id << " (" << this << ").  Current health: " << health << endl;
+        cerr << elapsed() << "Hero " << hero.id << " will cause damage to monster " << id << ".  Current health: " << health << endl;
         cerr << elapsed() << "  Projected health: " << endl;
         for (int i = 0; i < adjusted_health.size(); i++) {
             cerr << elapsed() << "    turn[" << i << "] = " << adjusted_health[i] << endl;
@@ -314,6 +316,21 @@ struct Entity
         out << spacer << "threat_for: " << c.threat_for << "\n";
         out << spacer << "end_position: " << c.end_position << "\n";
         out << "}";
+        return out;
+    }
+};
+
+struct PlayerStats {
+    int health;
+    int mana;
+
+    friend istream& operator >> (istream& in, PlayerStats& c) {
+        in >> c.health >> c.mana; cin.ignore();
+        return in;
+    }
+
+    friend ostream& operator << (ostream& out, const PlayerStats& c) {
+        out << "Base Health: " << c.health << ", Mana: " << c.mana;
         return out;
     }
 };
@@ -450,10 +467,12 @@ Point findInterdictionPoint(const Entity& hero, const Entity& threat) {
     throw exception();
 }
 
-struct EntityThreatList : RingList<vector<Entity*>> {
+struct ActionCalculator : RingList<vector<Entity*>> {
 
-    EntityThreatList(const Point& center, int initialDistance, int ringDistance, int ringsToTrack, int segments, double startAngle, double endAngle)
-        : RingList<vector<Entity*>>(center, initialDistance, ringDistance, ringsToTrack, segments, startAngle, endAngle)
+    ActionCalculator(const PlayerStats& my_stats, const PlayerStats& opponent_stats, const Point& base, int initialDistance, int ringDistance, int ringsToTrack, int segments, double startAngle, double endAngle)
+        : RingList<vector<Entity*>>(base, initialDistance, ringDistance, ringsToTrack, segments, startAngle, endAngle)
+        , my_stats(my_stats)
+        , opponent_stats(opponent_stats)
     {
         cerr << elapsed() << "Initializing threat list.  Start angle: " << radiansToDegrees(startAngle) << ", End angle: " << radiansToDegrees(endAngle) << endl;
     }
@@ -461,6 +480,9 @@ struct EntityThreatList : RingList<vector<Entity*>> {
     vector<Entity*> threats;
     vector<Entity*> heroes;
     vector<Entity*> monsters;
+    const PlayerStats my_stats;
+    const PlayerStats opponent_stats;
+    vector<pair<Entity*, int>> turnsToReachBase;
 
     void placeEntity(Entity* e) {
         if (e->type == EntityType::Hero) {
@@ -478,7 +500,7 @@ struct EntityThreatList : RingList<vector<Entity*>> {
                     auto& ring = rings[i];
                     cerr << elapsed() << "Monster " << e->id << " (distance: " << e->polar.dist << ") in ring " << i << " (distance: " << ring.innerDistance << " - " << ring.outerDistance << ")" << endl;
                     int segmentNum = (e->polar.theta - startAngle) / segmentArc;
-                    cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e->polar: " << e->polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
+                    //cerr << elapsed() << "  segment #: " << segmentNum << ", startAngle: " << radiansToDegrees(startAngle) << ", e->polar: " << e->polar << ", segment arc: " << radiansToDegrees(segmentArc) << endl;
                     auto& segment = ring.segmentList[segmentNum];
                     segment.data.push_back(e);
                     if (e->targettingMyBase() || e->willTargetMyBase())
@@ -573,8 +595,41 @@ struct EntityThreatList : RingList<vector<Entity*>> {
         }
     }
 
+    int calculateTurnsToReachBase(const Entity& threat) {
+        if (threat.targettingMyBase()) {
+            return (threat.polar.dist - BASE_DAMAGE_RADIUS) / MONSTER_TRAVEL;
+        }
+        Point position = threat.position;
+        for (int t = 0; t < 50; t++) {
+            Polar p(center, position);
+            if (p.dist < BASE_RADIUS) { // now monster will target base
+                return t + (p.dist - BASE_DAMAGE_RADIUS) / MONSTER_TRAVEL;
+            }
+            position += threat.velocity;
+        }
+        cerr << "Error: \"threat\" " << threat.id << " will not reach base in 50 turns.  Will target my base: " << threat.willTargetMyBase() << endl;
+        throw exception();
+    }
+
+    int calculateTurnsUntilILose() {
+        if (my_stats.health > threats.size())
+            return 50;
+        for (auto threat : threats) {
+            turnsToReachBase.push_back(make_pair(threat, calculateTurnsToReachBase(*threat)));
+        }
+        sort(begin(turnsToReachBase), end(turnsToReachBase), [](const auto& a, const auto& b) -> bool { return a.second < b.second; });
+        cerr << elapsed() << "Turns to reach base: " << endl;
+        for (pair<Entity*, int> p : turnsToReachBase) {
+            cerr << elapsed() << "  Entity ID: " << p.first->id << ", Turns: " << p.second << endl;
+        }
+        return turnsToReachBase[my_stats.health - 1].second;
+    }
+
     vector<unique_ptr<Action>> determineActions() {
         cerr << elapsed() << "Determining actions to take" << endl;
+
+        int turnsRemaining = calculateTurnsUntilILose();
+        cerr << elapsed() << "Turns until I lose (without attacking threats): " << turnsRemaining << endl;
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
@@ -728,7 +783,7 @@ struct EntityThreatList : RingList<vector<Entity*>> {
             int distance = (hero.position - monster->position).distance();
             int turns_to_reach = countTurnsToInterdict(*monster, hero);
             cerr << elapsed() << "Determined it will take hero " << hero.id << " " << turns_to_reach << " turns to reach monster " << monster->id << endl;
-            cerr << elapsed() << "And this monster (" << &monster << ") will have " << monster->healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
+            cerr << elapsed() << "And this monster will have " << monster->healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
             if (!monster->isAliveInNTurns(turns_to_reach))
                 continue;
 
@@ -881,23 +936,22 @@ int main()
     // game loop
     while (1) {
         turn_count++;
-        for (int i = 0; i < 2; i++) {
-            int health; // Each player's base health
-            int mana; // Ignore in the first league; Spend ten mana to cast a spell
-            cin >> health >> mana; cin.ignore();
-            if (i == 0) {
-                start = Clock::now();
-                cerr << elapsed() << "Turn: " << turn_count << endl;
-            }
-            cerr << "Base Health: " << health << ", Mana: " << mana << endl;
-        }
+        PlayerStats my_stats;
+        PlayerStats opponent_stats;
+        cin >> my_stats;
+        start = Clock::now();
+        cerr << elapsed() << "Turn: " << turn_count << endl;
+        cin >> opponent_stats;
+        cerr << elapsed() << "My Stats: " << my_stats << endl;
+        cerr << elapsed() << "Opponent Stats: " << opponent_stats << endl;
+
         int entity_count; // Amount of heros and monsters you can see
         cin >> entity_count; cin.ignore();
 
         cerr << elapsed() << "Entity Count: " << entity_count << endl;
         vector<Entity> entities(entity_count);
 
-        EntityThreatList threatList(base, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, start_angle, end_angle);
+        ActionCalculator calculator(my_stats, opponent_stats, base, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, start_angle, end_angle);
 
         cerr << elapsed() << "Reading entities" << endl;
         for (int i = 0; i < entity_count; i++) {
@@ -905,17 +959,18 @@ int main()
             cin >> entity;
             entity.polar = Polar(base, entity.position);
 
-            if (entity.targettingMyBase() || entity.willTargetMyBase())
-                cerr << elapsed() << "Entity[" << i << "]: " << entity << endl;
+            //if (entity.targettingMyBase() || entity.willTargetMyBase())
+            //    cerr << elapsed() << "Entity[" << i << "]: " << entity << endl;
+
             //cerr << elapsed() << "Placing entity " << i << endl;
-            threatList.placeEntity(&entity);
+            calculator.placeEntity(&entity);
             //cerr << elapsed() << "Entity placed " << endl;
         }
-        cerr << elapsed() << "Read entities" << endl;
+        //cerr << elapsed() << "Read entities" << endl;
 
-        vector<unique_ptr<Action>> actions = threatList.determineActions();
+        vector<unique_ptr<Action>> actions = calculator.determineActions();
 
-        cerr << elapsed() << "Actions determined" << endl;
+        //cerr << elapsed() << "Actions determined" << endl;
 
         for (auto& action : actions) {
             cout << action->toString() << endl;
