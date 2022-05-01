@@ -571,23 +571,39 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     pair<bool, vector<int>> canThreatBeEliminated(const Entity& threat) {
         Point position = threat.position;
         int health = threat.health;
-        vector<int> turnsToInterdict;
-        for (int h = 0; h < heroes.size(); h++)
-            turnsToInterdict.push_back(countTurnsToInterdict(threat, *heroes[h]));
-        vector<int> heroes_who_can_harm_threat;
+        vector<pair<int, int>> turnsToInterdict;
+        cerr << elapsed() << "Turns to interdict:" << endl;
+        for (int h = 0; h < heroes.size(); h++) {
+            int turns = countTurnsToInterdict(threat, *heroes[h]);
+            cerr << elapsed() << "  Hero[" << h << "]: " << turns << endl;
+            turnsToInterdict.push_back(make_pair(h, turns));
+        }
 
+        sort(begin(turnsToInterdict), end(turnsToInterdict), [](const auto& a, const auto& b) -> bool {
+            return a.second < b.second;
+            });
+
+        vector<int> heroes_needed_for_threat;
         for (int turn = 0; turn < 50; turn++) {
-            for (int h = 0; h < heroes.size(); h++)
-                if (turnsToInterdict[h] <= turn) {
-                    if (turnsToInterdict[h] == turn)
-                        heroes_who_can_harm_threat.push_back(h);
+            for (pair<int, int> pair : turnsToInterdict) {
+                cerr << elapsed() << "Future turn: " << turn << endl;
+                if (pair.second <= turn) {
                     health -= HERO_DAMAGE;
+                    cerr << elapsed() << "Hero " << pair.first << " causes damage on turn " << turn << ", monster health: " << health << endl;
+                    if (pair.second == turn) {
+                        heroes_needed_for_threat.push_back(pair.first);
+                        if (threat.shield_life == 0) {
+                            cerr << elapsed() << "Monster not shielded -- using 1 hero only." << endl;
+                            break; // if the monster isn't shielded, one hero can take care of it by using spells
+                        }
+                    }
                 }
-            if (health <= 0)
-                return make_pair(true, heroes_who_can_harm_threat);
+            }
+            if (health <= 0 || (threat.shield_life == 0 && !heroes_needed_for_threat.empty()))
+                return make_pair(true, heroes_needed_for_threat);
             position += threat.velocity;
             if ((position - center).distance() <= 300)
-                return make_pair(false, heroes_who_can_harm_threat);
+                return make_pair(false, heroes_needed_for_threat);
         }
         cerr << "Unable to determine if threat can be eliminated " << threat << endl;
         throw exception();
@@ -864,7 +880,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
         if (allActionsAreSet(actions)) return actions;
 
-        if (turnsUntilILose < 8 && my_stats.mana > 30) {
+        if (turnsUntilILose < 8 && my_stats.mana > 30 && !top_threats.empty()) {
             // which hero is closest to my base?
             vector<pair<int, int>> closest;
             for (int h = 0; h < heroes.size(); h++) {
@@ -872,8 +888,12 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 closest.push_back(make_pair(h, distance));
             }
             sort(begin(closest), end(closest), [](const auto& a, const auto& b) -> bool { return a.second < b.second; });
-            cerr << elapsed() << "Assigning wind action for defensive purposes" << endl;
-            actions[closest[0].first] = make_unique<WindSpellAction>(opponent_stats.base);
+
+            // If the monster closest to the base is not shielded and is within distance of the closest hero, cast wind.
+            if (top_threats[0]->shield_life == 0 && (top_threats[0]->position - heroes[closest[0].first]->position).distance() < WIND_SPELL_RANGE) {
+                cerr << elapsed() << "Assigning wind action for defensive purposes" << endl;
+                actions[closest[0].first] = make_unique<WindSpellAction>(opponent_stats.base);
+            }
         }
 
         if (allActionsAreSet(actions)) return actions;
@@ -1367,7 +1387,7 @@ int main()
 
         cerr << elapsed() << "Known threats: " << endl;
         for (auto entity : calculator.threats) {
-            cerr << elapsed() << entity << endl;
+            cerr << elapsed() << *entity << endl;
         }
 
         cerr << elapsed() << "Known monsters: " << endl;
