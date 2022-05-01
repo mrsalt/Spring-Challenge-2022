@@ -667,7 +667,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     }
 
     void calculateTurnsUntilIMonstersAttack() {
-        if (my_stats.health > threats.size()) {
+        if (threats.empty()) {
             turnsUntilILose = 50;
             return;
         }
@@ -680,7 +680,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             top_threats.push_back(p.first);
             cerr << elapsed() << "  Entity ID: " << p.first->id << ", Turns: " << p.second << endl;
         }
-        turnsUntilILose = turnsToReachBase[my_stats.health - 1].second;
+        turnsUntilILose = turnsToReachBase[0].second;
     }
 
     bool windAttackIsPossible(vector<unique_ptr<Action>>& actions) {
@@ -859,9 +859,6 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
     vector<unique_ptr<Action>> determineActions() {
         cerr << elapsed() << "Determining actions to take" << endl;
-
-        calculateTurnsUntilIMonstersAttack();
-        cerr << elapsed() << "Turns until I lose (without attacking threats): " << turnsUntilILose << endl;
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
@@ -1368,7 +1365,17 @@ int main()
             //cerr << elapsed() << "Entity placed " << endl;
         }
 
-        cerr << elapsed() << "Read entities.  Threats: " << calculator.threats.size() << ", Monsters: " << calculator.monsters.size() << endl;
+        cerr << elapsed() << "Known threats: " << endl;
+        for (auto entity : calculator.threats) {
+            cerr << elapsed() << entity << endl;
+        }
+
+        cerr << elapsed() << "Known monsters: " << endl;
+        for (auto entity : calculator.monsters) {
+            if (find(begin(calculator.threats), end(calculator.threats), entity) == end(calculator.threats))
+                cerr << elapsed() << "  " << entity->id << endl;
+        }
+        calculator.calculateTurnsUntilIMonstersAttack();
 
         vector<unique_ptr<Action>> actions = calculator.determineActions();
 
