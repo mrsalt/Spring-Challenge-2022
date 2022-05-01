@@ -20,9 +20,11 @@ string elapsed() {
     return string("[") + to_string(chrono::duration_cast<chrono::milliseconds>(Clock::now() - start).count()) + "] ";
 }
 
+const int RING_SIZE = 5000;
+const int RINGS_TO_TRACK = 3;
+
 const int BASE_RADIUS = 5000;
 const int BASE_DAMAGE_RADIUS = 300;
-const int RING_SIZE = 2400;
 const int ATTACK_RADIUS = 800;
 const int ATTACK_SQUARED = ATTACK_RADIUS * ATTACK_RADIUS;
 const int HERO_TRAVEL = 800;
@@ -32,7 +34,6 @@ const int HERO_DAMAGE = 2; // heroes do 2 points of damage to nearby enemies
 const int WIND_SPELL_RANGE = 1280;
 const int WIND_DISTANCE = 2200;
 const int CONTROL_SPELL_RANGE = 2200;
-
 const int RIGHT_EDGE = 17630;
 const int BOTTOM_EDGE = 9000;
 int heroes_per_player; // Always 3
@@ -1173,10 +1174,10 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             int bDistance = (hero.position - b->position).distance();
             return aDistance < bDistance;
             });
-        cerr << elapsed() << "Closest monsters" << endl;
-        for (auto e : closest) {
-            cerr << elapsed() << "  " << e->id << ", dist: " << (hero.position - e->position).distance() << endl;
-        }
+        //cerr << elapsed() << "Closest monsters" << endl;
+        //for (auto e : closest) {
+        //    cerr << elapsed() << "  " << e->id << ", dist: " << (hero.position - e->position).distance() << endl;
+        //}
         return closest;
     }
 
@@ -1306,7 +1307,7 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
     double defender_arc = (my_stats.end_angle - my_stats.start_angle) / heroes_per_player;
     double current = my_stats.start_angle + defender_arc / 2.0;
     for (int i = 0; i < heroes_per_player; i++) {
-        Point p = Polar(BASE_RADIUS + HERO_TRAVEL, current).toPoint(my_stats.base);
+        Point p = Polar(BASE_RADIUS + HERO_TRAVEL * (i == 1 ? 4 : 3), current).toPoint(my_stats.base);
         cerr << "Default hero position[" << i << "]: " << p << endl;
         default_hero_location.push_back(p);
         current += defender_arc;
@@ -1351,9 +1352,9 @@ int main()
         cerr << elapsed() << "Entity Count: " << entity_count << endl;
         vector<Entity> entities(entity_count);
 
-        ActionCalculator calculator(my_stats, opponent_stats, BASE_RADIUS, RING_SIZE, 3, heroes_per_player, my_stats.start_angle, my_stats.end_angle);
+        ActionCalculator calculator(my_stats, opponent_stats, BASE_RADIUS, RING_SIZE, RINGS_TO_TRACK, heroes_per_player, my_stats.start_angle, my_stats.end_angle);
 
-        cerr << elapsed() << "Reading entities" << endl;
+        //cerr << elapsed() << "Reading entities" << endl;
         for (int i = 0; i < entity_count; i++) {
             Entity& entity = entities[i];
             cin >> entity;
@@ -1366,7 +1367,8 @@ int main()
             calculator.placeEntity(&entity);
             //cerr << elapsed() << "Entity placed " << endl;
         }
-        //cerr << elapsed() << "Read entities" << endl;
+
+        cerr << elapsed() << "Read entities.  Threats: " << calculator.threats.size() << ", Monsters: " << calculator.monsters.size() << endl;
 
         vector<unique_ptr<Action>> actions = calculator.determineActions();
 
