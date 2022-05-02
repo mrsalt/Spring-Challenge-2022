@@ -226,6 +226,27 @@ struct Polar
     }
 };
 
+struct PlayerStats {
+    int health;
+    int mana;
+    Point base;
+    double start_angle;
+    double end_angle;
+
+    friend istream& operator >> (istream& in, PlayerStats& c) {
+        in >> c.health >> c.mana; cin.ignore();
+        return in;
+    }
+
+    friend ostream& operator << (ostream& out, const PlayerStats& c) {
+        out << "Base Health: " << c.health << ", Mana: " << c.mana;
+        return out;
+    }
+};
+
+PlayerStats my_stats;
+PlayerStats opponent_stats;
+
 struct Entity
 {
     int id; // Unique identifier
@@ -243,17 +264,26 @@ struct Entity
     Point end_position;
 
     vector<int> damagedBy;
+    bool closerToMyBase;
 
     bool targettingMyBase() const {
-        return type == EntityType::Monster && near_base == 1;
+        return type == EntityType::Monster && near_base == 1 && closerToMyBase;
     }
 
     bool willTargetMyBase() const {
         return type == EntityType::Monster && near_base == 0 && threat_for == ThreatType::MyBase;
     }
 
+    bool targettingOpponentBase() const {
+        return type == EntityType::Monster && near_base == 1 && !closerToMyBase;
+    }
+
+    bool willTargetOpponentBase() const {
+        return type == EntityType::Monster && near_base == 0 && threat_for == ThreatType::OpponentBase;
+    }
+
     void damage(const Entity& hero, int turnsToReach) {
-        // Each hero can damage a given entity only once.
+        // Each hero can "damage" a given entity only once.  This method computes all the damage a hero will do to a given monster.
         if (find(damagedBy.begin(), damagedBy.end(), hero.id) != damagedBy.end())
             return;
         damagedBy.push_back(hero.id);
@@ -322,6 +352,7 @@ struct Entity
         c.threat_for = (ThreatType)threatType;
         in.ignore();
         c.end_position = c.position + c.velocity;
+        c.closerToMyBase = (c.position - my_stats.base).squared() < (c.position - opponent_stats.base).squared();
         return in;
     }
 
@@ -339,24 +370,6 @@ struct Entity
         out << spacer << "threat_for: " << c.threat_for << "\n";
         out << spacer << "end_position: " << c.end_position << "\n";
         out << "}";
-        return out;
-    }
-};
-
-struct PlayerStats {
-    int health;
-    int mana;
-    Point base;
-    double start_angle;
-    double end_angle;
-
-    friend istream& operator >> (istream& in, PlayerStats& c) {
-        in >> c.health >> c.mana; cin.ignore();
-        return in;
-    }
-
-    friend ostream& operator << (ostream& out, const PlayerStats& c) {
-        out << "Base Health: " << c.health << ", Mana: " << c.mana;
         return out;
     }
 };
@@ -1119,7 +1132,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 }
                 if (!monsterIsControlled) {
                     int monsterDist = (hero.position - entity->position).distance();
-                    if (entity->willTargetMyBase() && monsterDist > ATTACK_RADIUS&& monsterDist < CONTROL_SPELL_RANGE)
+                    if (!(entity->willTargetOpponentBase() || entity->targettingOpponentBase()) && monsterDist > ATTACK_RADIUS&& monsterDist < CONTROL_SPELL_RANGE)
                         monstersToControl.push_back(entity);
                 }
             }
@@ -1189,7 +1202,20 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
     vector<Entity*> findClosestMonsters(const Entity& hero, const vector<Entity*>& monsters)
     {
-        vector<Entity*> closest = monsters;
+        vector<Entity*> closest;
+        for (auto& monster : monsters) {
+            // don't attack monsters that are going to attack my opponent
+            if (monster->willTargetOpponentBase() || monster->targettingOpponentBase())
+                continue;
+
+            int distance = (hero.position - monster->position).distance();
+            int turns_to_reach = countTurnsToInterdict(*monster, hero);
+            if (!monster->isAliveInNTurns(turns_to_reach))
+                continue;
+
+            closest.push_back(monster);
+        }
+
         sort(begin(closest), end(closest), [&hero](const auto& a, const auto& b) -> bool {
             int aDistance = (hero.position - a->position).distance();
             int bDistance = (hero.position - b->position).distance();
@@ -1205,12 +1231,17 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     const Entity* findClosestMonster(const Entity& hero, const vector<Entity*>& monsters, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
+            // don't attack monsters that are going to attack my opponent
+            if (monster->willTargetOpponentBase() || monster->targettingOpponentBase())
+                continue;
+
             int distance = (hero.position - monster->position).distance();
             int turns_to_reach = countTurnsToInterdict(*monster, hero);
-            cerr << elapsed() << "Determined it will take hero " << hero.id << " " << turns_to_reach << " turns to reach monster " << monster->id << endl;
-            cerr << elapsed() << "  And this monster will have " << monster->healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
             if (!monster->isAliveInNTurns(turns_to_reach))
                 continue;
+
+            cerr << elapsed() << "Determined it will take hero " << hero.id << " " << turns_to_reach << " turns to reach monster " << monster->id << endl;
+            cerr << elapsed() << "  And this monster will have " << monster->healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
 
             if (closest == nullptr || distance < min_distance) {
                 closest = monster;
@@ -1346,8 +1377,6 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
 int main()
 {
     start = Clock::now();
-    PlayerStats my_stats;
-    PlayerStats opponent_stats;
     cin >> my_stats.base; cin.ignore();
     cerr << elapsed() << "Base: " << my_stats.base << endl;
 
