@@ -158,6 +158,12 @@ struct Point
     }
 };
 
+struct Arc
+{
+    double start;
+    double end;
+};
+
 vector<Point> default_hero_location;
 vector<Point> default_hero_location_in_standard_mode;
 vector<Point> default_hero_location_in_attack_mode;
@@ -235,8 +241,7 @@ struct PlayerStats {
     int health;
     int mana;
     Point base;
-    double start_angle;
-    double end_angle;
+    Arc arc;
 
     friend istream& operator >> (istream& in, PlayerStats& c) {
         in >> c.health >> c.mana; cin.ignore();
@@ -1150,14 +1155,14 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         static int controlCount = 0;
         double angle;
         if (controlCount % 2 == 0) {
-            angle = opponent_stats.start_angle + (M_PI_2 / 5.0);
+            angle = opponent_stats.arc.start + (M_PI_2 / 5.0);
         }
         else {
-            angle = opponent_stats.end_angle - (M_PI_2 / 5.0);
+            angle = opponent_stats.arc.end - (M_PI_2 / 5.0);
         }
 
         controlCount++;
-        //cerr << elapsed() << "Sending spider to " << Polar(BASE_RADIUS, angle) << " (angle: " << angle << ") which is " << Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base) << " (opponent base start/end angles are: " << opponent_stats.start_angle << " (" << radiansToDegrees(opponent_stats.start_angle) << "), " << opponent_stats.end_angle << " (" << radiansToDegrees(opponent_stats.end_angle) << "))" << endl;
+        //cerr << elapsed() << "Sending spider to " << Polar(BASE_RADIUS, angle) << " (angle: " << angle << ") which is " << Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base) << " (opponent base start/end angles are: " << opponent_stats.arc.start << " (" << radiansToDegrees(opponent_stats.arc.start) << "), " << opponent_stats.arc.end << " (" << radiansToDegrees(opponent_stats.arc.end) << "))" << endl;
         //cerr << elapsed() << "  sin(angle) * radius = " << sin(angle) * BASE_RADIUS << endl;
         return Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base);
     }
@@ -1215,26 +1220,26 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 };
 
 void init_top_left(PlayerStats& stats) {
-    stats.start_angle = 0;
-    stats.end_angle = M_PI_2;
+    stats.arc.start = 0;
+    stats.arc.end = M_PI_2;
     stats.base = { 0, 0 };
 }
 
 void init_top_right(PlayerStats& stats) {
-    stats.start_angle = M_PI_2;
-    stats.end_angle = M_PI;
+    stats.arc.start = M_PI_2;
+    stats.arc.end = M_PI;
     stats.base = { RIGHT_EDGE, 0 };
 }
 
 void init_bottom_right(PlayerStats& stats) {
-    stats.start_angle = M_PI;
-    stats.end_angle = M_PI * 3.0 / 2.0;
+    stats.arc.start = M_PI;
+    stats.arc.end = M_PI * 3.0 / 2.0;
     stats.base = { RIGHT_EDGE, BOTTOM_EDGE };
 }
 
 void init_bottom_left(PlayerStats& stats) {
-    stats.start_angle = M_PI * 3.0 / 2.0;
-    stats.end_angle = M_PI * 2.0;
+    stats.arc.start = M_PI * 3.0 / 2.0;
+    stats.arc.end = M_PI * 2.0;
     stats.base = { 0, BOTTOM_EDGE };
 }
 
@@ -1266,10 +1271,10 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
         throw exception();
     }
 
-    cerr << "Base defense start angle: " << radiansToDegrees(my_stats.start_angle) << ", end angle: " << radiansToDegrees(my_stats.end_angle) << endl;
+    cerr << "Base defense start angle: " << radiansToDegrees(my_stats.arc.start) << ", end angle: " << radiansToDegrees(my_stats.arc.end) << endl;
 
-    double defender_arc = (my_stats.end_angle - my_stats.start_angle) / heroes_per_player;
-    double current = my_stats.start_angle + defender_arc / 2.0;
+    double defender_arc = (my_stats.arc.end - my_stats.arc.start) / heroes_per_player;
+    double current = my_stats.arc.start + defender_arc / 2.0;
     for (int i = 0; i < heroes_per_player; i++) {
         Point p = Polar(BASE_RADIUS + HERO_TRAVEL * (i == 1 ? 4 : 3), current).toPoint(my_stats.base);
         cerr << "Default hero position[" << i << "]: " << p << endl;
@@ -1277,17 +1282,17 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
         current += defender_arc;
     }
 
-    current = opponent_stats.start_angle + defender_arc;
+    current = opponent_stats.arc.start + defender_arc;
     for (int i = 0; i < heroes_per_player; i++) {
         Point p = Polar(BASE_RADIUS + HERO_TRAVEL * 3, current).toPoint(opponent_stats.base);
         default_attack_position.push_back(p);
         current += defender_arc / 2;
     }
 
-    double arc_for_two = (my_stats.end_angle - my_stats.start_angle) / 2;
-    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.start_angle + arc_for_two / 2.0).toPoint(my_stats.base));
-    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, (opponent_stats.start_angle + opponent_stats.end_angle) / 2.0).toPoint(opponent_stats.base));
-    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.start_angle + arc_for_two * 3.0 / 4.0).toPoint(my_stats.base));
+    double arc_for_two = (my_stats.arc.end - my_stats.arc.start) / 2;
+    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.arc.start + arc_for_two / 2.0).toPoint(my_stats.base));
+    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, (opponent_stats.arc.start + opponent_stats.arc.end) / 2.0).toPoint(opponent_stats.base));
+    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.arc.start + arc_for_two * 3.0 / 4.0).toPoint(my_stats.base));
     default_hero_location_in_standard_mode = default_hero_location;
 }
 
@@ -1319,7 +1324,7 @@ int main()
         cerr << elapsed() << "Entity Count: " << entity_count << endl;
         vector<Entity> entities(entity_count);
 
-        ActionCalculator calculator(my_stats, opponent_stats, BASE_RADIUS, RING_SIZE, RINGS_TO_TRACK, heroes_per_player, my_stats.start_angle, my_stats.end_angle);
+        ActionCalculator calculator(my_stats, opponent_stats, BASE_RADIUS, RING_SIZE, RINGS_TO_TRACK, heroes_per_player, my_stats.arc.start, my_stats.arc.end);
 
         //cerr << elapsed() << "Reading entities" << endl;
         for (int i = 0; i < entity_count; i++) {
