@@ -718,6 +718,14 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     }
 
     void calculateTurnsUntilIMonstersAttack() {
+
+        // sort opposing heroes by proximity to my base.
+        sort(begin(opposing_heroes), end(opposing_heroes), [my_stats = my_stats](const auto& a, const auto& b) -> bool {
+            int aDistance = (my_stats.base - a->position).distance();
+            int bDistance = (my_stats.base - b->position).distance();
+            return aDistance < bDistance;
+            });
+
         if (threats.empty()) {
             turnsUntilBaseIsAttacked = 50;
             return;
@@ -925,6 +933,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             // 1) control monsters that are > ATTACK_DISTANCE away and have full health.
             // 2) move towards enemy base
             // 3) shield attacking monsters once I reach enemy base
+            // 4) move away from monsters attacking enemy base
             const Entity& attacker = *heroes[1];
 
             unique_ptr<Action> attackerAction = findMonsterToControl(attacker, actions);
@@ -932,7 +941,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 int distToOpponentBase = (attacker.position - opponent_stats.base).distance();
                 if (distToOpponentBase > BASE_RADIUS) {
                     // zig zag towards the base
-                    double angle_adjust = M_PI_2 / 3.0; // 90 degrees
+                    double angle_adjust = M_PI_2 / 2.0; // 45 degrees
                     if ((turn_count / 4) % 2 == 0)
                         angle_adjust = angle_adjust * -1.0;
                     Point p = Polar(attacker.position, opponent_stats.base).rotate(angle_adjust).toPoint(attacker.position);
@@ -949,16 +958,41 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                         sort(begin(shieldableMonsters), end(shieldableMonsters), [](const auto& a, const auto& b) -> bool {
                             return a->health > b->health;
                             });
-                        if (shieldableMonsters[0]->health > 6) {
+                        if (shieldableMonsters[0]->health > 8) {
+                            cerr << elapsed() << "Attacker shielding " << shieldableMonsters[0]->id << endl;
                             attackerAction = make_unique<ShieldSpellAction>(*shieldableMonsters[0]);
                         }
+                    }
+                    if (!attackerAction) {
+                        // find a safe spot where I won't attack monsters
+                        vector<pair<int, double>> l;
+                        for (double r = 0.0; r < M_PI * 2.0; r += M_PI / 32.0) {
+                            Point p = Polar(HERO_TRAVEL, r).toPoint(attacker.position);
+                            int attackedMonsters = healthyMonstersReachedFrom(p);
+                            l.push_back(make_pair(attackedMonsters, r));
+                        }
+                        sort(begin(l), end(l), [](auto& a, auto& b) -> bool { return a.first < b.first; });
+                        int minMonstersAttacked = l[0].first;
+                        vector<Point> points;
+                        for (auto& p : l) {
+                            if (p.first == minMonstersAttacked) {
+                                points.push_back(Polar(HERO_TRAVEL, p.second).toPoint(attacker.position));
+                            }
+                        }
+                        sort(begin(points), end(points), [](auto& a, auto& b) -> bool {
+                            int aDist = (default_hero_location_in_attack_mode[1] - a).distance();
+                            int bDist = (default_hero_location_in_attack_mode[1] - b).distance();
+                            return aDist < bDist;
+                            });
+                        cerr << elapsed() << "Attacker moving to " << points[0] << " to avoid damaging monsters" << endl;
+                        attackerAction = assignMoveAction(attacker, points[0]);
                     }
                 }
             }
             actions[1] = move(attackerAction);
         }
 
-        if (turnsUntilBaseIsAttacked < 13 && my_stats.mana > 30 && !top_threats.empty()) {
+        if (turnsUntilBaseIsAttacked < 14 && my_stats.mana > 30 && !top_threats.empty()) {
             // which hero is closest to my base?
             vector<pair<int, int>> closest;
             for (int h = 0; h < heroes.size(); h++) {
@@ -975,6 +1009,35 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 actions[closest[0].first] = make_unique<WindSpellAction>(opponent_stats.base);
             }
         }
+
+        /*
+        if (!opposing_heroes.empty()) {
+            auto opposing_hero = *opposing_heroes[0];
+            if ((opposing_hero.position - my_stats.base).distance() < BASE_RADIUS) {
+                bool wind_found = false;
+                for (int h = 0; h < heroes.size(); h++) {
+                    if (actions[h])
+                        continue;
+                    auto hero = *heroes[h];
+                    if ((hero.position - opposing_hero.position).distance() < WIND_SPELL_RANGE) {
+                        actions[h] = make_unique<WindSpellAction>(opponent_stats.base);
+                        wind_found = true;
+                        break;
+                    }
+                }
+                if (!wind_found) {
+                    vector<int> ids = { 0, 1, 2 };
+                    sort(begin(ids), end(ids), [&opposing_hero, heroes=heroes](int a, int b) -> bool {
+                        int aDistance = (opposing_hero.position - heroes[a]->position).distance();
+                        int bDistance = (opposing_hero.position - heroes[b]->position).distance();
+                        return aDistance < bDistance;
+                        });
+                    cerr << elapsed() << "Moving towards enemy hero to kick him out" << endl;
+                    actions[ids[0]] = assignMoveAction(*heroes[ids[0]], opposing_hero.position);
+                }
+            }
+        }
+        */
 
         if (allActionsAreSet(actions)) return actions;
 
@@ -1123,6 +1186,16 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         int reached = 0;
         for (auto& entity : monsters) {
             if ((p - entity->position).distance() < ATTACK_RADIUS) {
+                reached++;
+            }
+        }
+        return reached;
+    }
+
+    int healthyMonstersReachedFrom(const Point& p) {
+        int reached = 0;
+        for (auto& entity : monsters) {
+            if (entity->health > 8 && (p - entity->position).distance() < ATTACK_RADIUS) {
                 reached++;
             }
         }
@@ -1293,7 +1366,7 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
     double defender_arc = (my_stats.arc.end - my_stats.arc.start) / heroes_per_player;
     double current = my_stats.arc.start + defender_arc / 2.0;
     for (int i = 0; i < heroes_per_player; i++) {
-        Point p = Polar(BASE_RADIUS + HERO_TRAVEL * (i == 1 ? 4 : 3), current).toPoint(my_stats.base);
+        Point p = Polar(BASE_RADIUS + HERO_TRAVEL * (i == 1 ? 3 : 2), current).toPoint(my_stats.base);
         cerr << "Default hero position[" << i << "]: " << p << endl;
         default_hero_location.push_back(p);
         current += defender_arc;
