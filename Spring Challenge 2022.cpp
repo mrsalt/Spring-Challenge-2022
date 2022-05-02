@@ -900,7 +900,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
-        if (turn_count > 100 && my_stats.mana > 100 && top_threats.empty()) {
+        if (turn_count > 100 && my_stats.mana > 100 && (top_threats.empty() || turnsUntilILose > 10)) {
             inAttackMode = true;
         }
 
@@ -1012,49 +1012,6 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             }
         }
 
-        /*
-        vector<set<Point>> pointsReachableByHeroes(heroes.size());
-        map<Point, int> monstersAttackedAtPoint;
-
-        for (int i = 0; i < rings.size(); i++) {
-            Ring<vector<Entity*>>& ring = rings[i];
-            if (ring.monsterCount > 0) {
-                cerr << elapsed() << ring.monsterCount << " Monster(s) found in ring " << i << endl;
-                map<int, vector<int>> segmentsWithMonsters;
-                for (int j = 0; j < ring.segmentList.size(); j++) {
-                    Segment<vector<Entity*>>& segment = ring.segmentList[j];
-                    size_t count = segment.data.size();
-                    if (count > 0) {
-                        segmentsWithMonsters[count].push_back(j);
-                    }
-                }
-                cerr << elapsed() << "Examining " << segmentsWithMonsters.size() << " group(s) of segments." << endl;
-
-                findMonstersReachableFromPointsInSegments(segmentsWithMonsters, ring, monstersAttackedAtPoint, actions, pointsReachableByHeroes);
-                cerr << elapsed() << "Done examining ring " << i << endl;
-            }
-        }
-
-        cerr << elapsed() << "Findings points uniquely reachable " << endl;
-
-        vector<vector<Point>> pointsUniquelyReachableByHeroes(heroes.size());
-        for (int h = 0; h < heroes.size(); h++) {
-            if (actions[h])
-                continue;
-            cerr << elapsed() << "Hero " << h << " can reach " << pointsReachableByHeroes[h].size() << " points." << endl;
-            set<Point> pointsReachableByOtherHeroes;
-            for (int i = 0; i < heroes.size(); i++) {
-                if (i == h)
-                    continue;
-                const set<Point>& p = pointsReachableByHeroes[i];
-                pointsReachableByOtherHeroes.insert(p.begin(), p.end());
-            }
-            pointsUniquelyReachableByHeroes[h].resize(pointsReachableByHeroes[h].size());
-            vector<Point>::iterator end = (pointsReachableByHeroes[h].begin(), pointsReachableByHeroes[h].end(), pointsReachableByOtherHeroes.begin(), pointsReachableByOtherHeroes.end(), pointsUniquelyReachableByHeroes[h].begin());
-            size_t unique = (end - pointsUniquelyReachableByHeroes[h].begin());
-            pointsUniquelyReachableByHeroes[h].resize(unique);
-            cerr << elapsed() << "Hero " << h << " (" << heroes[h]->position << ") can reach " << pointsUniquelyReachableByHeroes[h].size() << " unique points." << endl;
-        }*/
 
         for (int h = 0; h < heroes.size(); h++) {
             if (actions[h]) {
@@ -1063,15 +1020,6 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             }
             Point placement;
 
-            /*if (!pointsUniquelyReachableByHeroes[h].empty()) {
-                placement = findBestPointToAttack(monstersAttackedAtPoint, pointsUniquelyReachableByHeroes[h]);
-                cerr << elapsed() << "Assigning hero " << h << " a location uniquely reachable (" << placement << ")" << "\n";
-            }
-            else if (!pointsReachableByHeroes[h].empty()) {
-                placement = findBestPointToAttack(monstersAttackedAtPoint, pointsReachableByHeroes[h]);
-                cerr << elapsed() << "Assigning hero " << h << " a reachable location (" << placement << ")" << "\n";
-            }
-            else {*/
             for (int r = 0; r < rings.size(); r++) {
                 Ring<vector<Entity*>>& ring = rings[r];
 
@@ -1212,42 +1160,6 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         return Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base);
     }
 
-    void findMonstersReachableFromPointsInSegments(map<int, vector<int>>& segmentsWithMonsters, Ring<vector<Entity*>>& ring, map<Point, int>& monstersAttackedAtPoint, vector<unique_ptr<Action>>& actions, vector<set<Point>>& pointsReachableByHeroes)
-    {
-        // Let's examine the segments with monsters; break them apart
-        // into smaller segments and discover which locations reach the most monsters.
-        for (auto it = segmentsWithMonsters.rbegin(); it != segmentsWithMonsters.rend(); it++) {
-            const vector<int>& segmentNumbers = it->second;
-            cerr << elapsed() << segmentNumbers.size() << " segment(s) contain(s) " << it->first << " monster(s)." << endl;
-            for (int segmentNum : segmentNumbers) {
-                Segment<vector<Entity*>>& segment = ring.segmentList[segmentNum];
-                map<int, vector<Point>> monsterMap = findBestLocationsToPlaceDefenders(segment, ring);
-                if (monsterMap.empty())
-                    continue;
-                //cerr << elapsed() << "Monster map has " << monsterMap.size() << " elements" << endl;
-                auto pointIt = monsterMap.rbegin();
-                const vector<Point>& points = pointIt->second;
-                cerr << elapsed() << points.size() << " points(s) in segment " << segmentNum << " would attack " << pointIt->first << " monster(s):" << endl;
-                for (const Point& p : points) {
-                    monstersAttackedAtPoint[p] = pointIt->first;
-                    cerr << elapsed() << p << ": ";
-                    for (int h = 0; h < heroes.size(); h++) {
-                        if (actions[h])
-                            continue;
-                        const Entity& hero = *heroes[h];
-                        Delta dist = hero.position - p;
-                        if (dist.squared() < HERO_TRAVEL_SQUARED) {
-                            pointsReachableByHeroes[h].insert(p);
-                            cerr << "[hero " << h << "]";
-                        }
-                    }
-                    cerr << endl;
-                }
-            }
-            cerr << elapsed() << "Done examining group of segments " << endl;
-        }
-    }
-
     vector<Entity*> findClosestMonsters(const Entity& hero, const vector<Entity*>& monsters)
     {
         vector<Entity*> closest;
@@ -1297,56 +1209,6 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             }
         }
         return closest;
-    }
-
-    template<typename ContainerType>
-    Point findBestPointToAttack(map<Point, int>& monstersAttackedAtPoint, ContainerType pointList) {
-        int max_monsters = 0;
-        Point placement;
-        for (Point p : pointList) {
-            if (monstersAttackedAtPoint[p] > max_monsters) {
-                max_monsters = monstersAttackedAtPoint[p];
-                placement = p;
-            }
-        }
-        return placement;
-    }
-
-    map<int, vector<Point>> findBestLocationsToPlaceDefenders(Segment<vector<Entity*>>& segment, Ring<vector<Entity*>>& ring) {
-        const int attack_squared = ATTACK_RADIUS * ATTACK_RADIUS;
-
-        int ringsToTrack = 8;
-        int segments = 8;
-        int ringDistance = (ring.outerDistance - ring.innerDistance) / ringsToTrack;
-        RingList<int> reachableMonsters(center, ring.innerDistance, ringDistance, ringsToTrack, segments, segment.startAngle, segment.endAngle);
-
-        cerr << elapsed() << "Finding points that reach the most monsters" << endl;
-
-        for (Ring<int>& ring : reachableMonsters.rings) {
-            //cerr << elapsed() << "  Examining ring" << endl;
-            for (Segment<int>& s : ring.segmentList) {
-                //cerr << elapsed() << "    Examining segment" << endl;
-                for (const Entity* e : threats) {
-                    Delta distance = e->position - s.center;
-                    if (distance.squared() < attack_squared) {
-                        // if a hero were at this location, it would reach this threat.
-                        s.data++;
-                    }
-                }
-            }
-        }
-
-        cerr << elapsed() << "Initializing map by monster count to points" << endl;
-        map<int, vector<Point>> monsterMap;
-        for (Ring<int>& ring : reachableMonsters.rings) {
-            for (Segment<int>& s : ring.segmentList) {
-                if (s.data > 0) {
-                    monsterMap[s.data].push_back(s.center);
-                }
-            }
-        }
-        cerr << elapsed() << "Done initializing map by monster count to points" << endl;
-        return monsterMap;
     }
 };
 
