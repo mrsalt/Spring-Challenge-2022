@@ -544,7 +544,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     const PlayerStats opponent_stats;
     vector<pair<Entity*, int>> turnsToReachBase;
     vector<Entity*> top_threats;
-    int turnsUntilILose;
+    int turnsUntilBaseIsAttacked;
 
     void placeEntity(Entity* e) {
         if (e->type == EntityType::Hero) {
@@ -706,7 +706,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
     void calculateTurnsUntilIMonstersAttack() {
         if (threats.empty()) {
-            turnsUntilILose = 50;
+            turnsUntilBaseIsAttacked = 50;
             return;
         }
         for (auto threat : threats) {
@@ -718,7 +718,8 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             top_threats.push_back(p.first);
             cerr << elapsed() << "  Threat ID: " << p.first->id << ", Turns: " << p.second << endl;
         }
-        turnsUntilILose = turnsToReachBase[0].second;
+        turnsUntilBaseIsAttacked = turnsToReachBase[0].second;
+        cerr << elapsed() << "Turns until my base is damaged: " << turnsUntilBaseIsAttacked << endl;
     }
 
     bool windAttackIsPossible(vector<unique_ptr<Action>>& actions) {
@@ -900,7 +901,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
-        if (turn_count > 100 && my_stats.mana > 100 && (top_threats.empty() || turnsUntilILose > 10)) {
+        if (turn_count > 100 && my_stats.mana > 100 && (top_threats.empty() || turnsUntilBaseIsAttacked > 10)) {
             inAttackMode = true;
         }
 
@@ -943,7 +944,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             }
         }
 
-        if (turnsUntilILose < 13 && my_stats.mana > 30 && !top_threats.empty()) {
+        if (turnsUntilBaseIsAttacked < 13 && my_stats.mana > 30 && !top_threats.empty()) {
             // which hero is closest to my base?
             vector<pair<int, int>> closest;
             for (int h = 0; h < heroes.size(); h++) {
@@ -1306,7 +1307,7 @@ int main()
         turn_count++;
         cin >> my_stats;
         start = Clock::now();
-        cerr << elapsed() << "Turn: " << turn_count << endl;
+        cerr << elapsed() << "Turn: " << turn_count << ", inAttackMode: " << inAttackMode << endl;
         cin >> opponent_stats;
         cerr << elapsed() << "My Stats: " << my_stats << endl;
         cerr << elapsed() << "Opponent Stats: " << opponent_stats << endl;
