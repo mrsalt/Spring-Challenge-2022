@@ -23,6 +23,7 @@ string elapsed() {
 const int RING_SIZE = 5000;
 const int RINGS_TO_TRACK = 3;
 int turn_count = 0;
+bool inAttackMode = false;
 
 const int BASE_RADIUS = 5000;
 const int BASE_DAMAGE_RADIUS = 300;
@@ -35,6 +36,7 @@ const int HERO_DAMAGE = 2; // heroes do 2 points of damage to nearby enemies
 const int WIND_SPELL_RANGE = 1280;
 const int WIND_DISTANCE = 2200;
 const int CONTROL_SPELL_RANGE = 2200;
+const int SHIELD_SPELL_RANGE = 2200;
 const int RIGHT_EDGE = 17630;
 const int BOTTOM_EDGE = 9000;
 int heroes_per_player; // Always 3
@@ -157,6 +159,8 @@ struct Point
 };
 
 vector<Point> default_hero_location;
+vector<Point> default_hero_location_in_standard_mode;
+vector<Point> default_hero_location_in_attack_mode;
 vector<Point> default_attack_position;
 
 struct Polar
@@ -896,12 +900,55 @@ struct ActionCalculator : RingList<vector<Entity*>> {
 
         vector<unique_ptr<Action>> actions(heroes.size());
 
-        if (allActionsAreSet(actions)) return actions;
+        if (turn_count > 100 && my_stats.mana > 100 && top_threats.empty()) {
+            inAttackMode = true;
+        }
 
-        if (turnsUntilILose < 8 && my_stats.mana > 30 && !top_threats.empty()) {
+        default_hero_location = inAttackMode ? default_hero_location_in_attack_mode : default_hero_location_in_standard_mode;
+
+        if (inAttackMode) {
+            // goals:
+            // 1) control monsters that are > ATTACK_DISTANCE away and have full health.
+            // 2) move towards enemy base
+            // 3) shield attacking monsters once I reach enemy base
+            const Entity& attacker = *heroes[1];
+
+            unique_ptr<Action> attackerAction = findMonsterToControl(attacker, actions);
+            if (!attackerAction) {
+                int distToOpponentBase = (attacker.position - opponent_stats.base).distance();
+                if (distToOpponentBase > BASE_RADIUS) {
+                    // zig zag towards the base
+                    double angle_adjust = M_PI_2 / 3.0; // 90 degrees
+                    if ((turn_count / 4) % 2 == 0)
+                        angle_adjust = angle_adjust * -1.0;
+                    Point p = Polar(attacker.position, opponent_stats.base).rotate(angle_adjust).toPoint(attacker.position);
+                    cerr << elapsed() << "Attacker targetting " << p << ", angle_adjust: " << radiansToDegrees(angle_adjust) << endl;
+                    attackerAction = assignMoveAction(attacker, p);
+                }
+                else {
+                    vector<Entity*> shieldableMonsters;
+                    for (auto& monster : monsters) {
+                        if ((monster->targettingOpponentBase() || monster->willTargetOpponentBase()) && (attacker.position - monster->position).distance() < SHIELD_SPELL_RANGE && monster->shield_life == 0)
+                            shieldableMonsters.push_back(monster);
+                    }
+                    if (!shieldableMonsters.empty()) {
+                        sort(begin(shieldableMonsters), end(shieldableMonsters), [](const auto& a, const auto& b) -> bool {
+                            return a->health > b->health;
+                            });
+                        if (shieldableMonsters[0]->health > 6) {
+                            attackerAction = make_unique<ShieldSpellAction>(*shieldableMonsters[0]);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (turnsUntilILose < 13 && my_stats.mana > 30 && !top_threats.empty()) {
             // which hero is closest to my base?
             vector<pair<int, int>> closest;
             for (int h = 0; h < heroes.size(); h++) {
+                if (actions[h])
+                    continue;
                 int distance = (heroes[h]->position - my_stats.base).distance();
                 closest.push_back(make_pair(h, distance));
             }
@@ -1121,7 +1168,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
     unique_ptr<ControlSpellAction> findMonsterToControl(const Entity& hero, const vector<unique_ptr<Action>>& actions) {
         vector<Entity*> monstersToControl;
         for (auto& entity : monsters) {
-            if (entity->type == EntityType::Monster && entity->shield_life == 0) {
+            if (entity->type == EntityType::Monster && entity->shield_life == 0 && entity->health > 10) {
                 bool monsterIsControlled = entity->is_controlled;
                 if (!monsterIsControlled) {
                     for (auto& a : actions) {
@@ -1372,6 +1419,12 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
         default_attack_position.push_back(p);
         current += defender_arc / 2;
     }
+
+    double arc_for_two = (my_stats.end_angle - my_stats.start_angle) / 2;
+    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.start_angle + arc_for_two / 2.0).toPoint(my_stats.base));
+    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, (opponent_stats.start_angle + opponent_stats.end_angle) / 2.0).toPoint(opponent_stats.base));
+    default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.start_angle + arc_for_two * 3.0 / 4.0).toPoint(my_stats.base));
+    default_hero_location_in_standard_mode = default_hero_location;
 }
 
 // in Silver League now
