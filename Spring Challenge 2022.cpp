@@ -568,28 +568,32 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         throw exception();
     }
 
-    pair<bool, vector<int>> canThreatBeEliminated(const Entity& threat) {
+    pair<bool, vector<int>> canThreatBeEliminated(const Entity& threat, const vector<unique_ptr<Action>>& actions) {
         Point position = threat.position;
         int health = threat.health;
         vector<pair<int, int>> turnsToInterdict;
         cerr << elapsed() << "Turns to interdict:" << endl;
         for (int h = 0; h < heroes.size(); h++) {
+            if (actions[h])
+                continue; // action already assigned
             int turns = countTurnsToInterdict(threat, *heroes[h]);
             cerr << elapsed() << "  Hero[" << h << "]: " << turns << endl;
             turnsToInterdict.push_back(make_pair(h, turns));
         }
+        vector<int> heroes_needed_for_threat;
+
+        if (turnsToInterdict.empty()) // all heroes assigned already
+            return make_pair(false, heroes_needed_for_threat);
 
         sort(begin(turnsToInterdict), end(turnsToInterdict), [](const auto& a, const auto& b) -> bool {
             return a.second < b.second;
             });
 
-        vector<int> heroes_needed_for_threat;
         for (int turn = 0; turn < 50; turn++) {
             for (pair<int, int> pair : turnsToInterdict) {
-                cerr << elapsed() << "Future turn: " << turn << endl;
                 if (pair.second <= turn) {
                     health -= HERO_DAMAGE;
-                    cerr << elapsed() << "Hero " << pair.first << " causes damage on turn " << turn << ", monster health: " << health << endl;
+                    //cerr << elapsed() << "Hero " << pair.first << " causes damage on turn " << turn << ", monster health: " << health << endl;
                     if (pair.second == turn) {
                         heroes_needed_for_threat.push_back(pair.first);
                         if (threat.shield_life == 0) {
@@ -694,7 +698,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         cerr << elapsed() << "Turns to reach base: " << endl;
         for (pair<Entity*, int> p : turnsToReachBase) {
             top_threats.push_back(p.first);
-            cerr << elapsed() << "  Entity ID: " << p.first->id << ", Turns: " << p.second << endl;
+            cerr << elapsed() << "  Threat ID: " << p.first->id << ", Turns: " << p.second << endl;
         }
         turnsUntilILose = turnsToReachBase[0].second;
     }
@@ -928,11 +932,11 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             return actions;
         }
 
-        if (threats.size() == 1) {
-            const Entity& threat = *threats.front();
-            const auto& analysis = canThreatBeEliminated(threat);
+        for (auto& t : threats) {
+            const Entity& threat = *t;
+            const auto& analysis = canThreatBeEliminated(threat, actions);
             if (analysis.first) {
-                cerr << elapsed() << "Only 1 threat.  Ordering required heroes (" << analysis.second.size() << ") to interdict." << endl;
+                cerr << elapsed() << "Ordering required heroes (" << analysis.second.size() << ") to interdict threat " << threat.id << ":" << endl;
                 for (int h : analysis.second) {
                     const Entity& hero = *heroes[h];
                     const Point& p = findInterdictionPoint(hero, threat);
@@ -1204,7 +1208,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             int distance = (hero.position - monster->position).distance();
             int turns_to_reach = countTurnsToInterdict(*monster, hero);
             cerr << elapsed() << "Determined it will take hero " << hero.id << " " << turns_to_reach << " turns to reach monster " << monster->id << endl;
-            cerr << elapsed() << "And this monster will have " << monster->healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
+            cerr << elapsed() << "  And this monster will have " << monster->healthInNTurns(turns_to_reach) << " health when the hero reaches it." << endl;
             if (!monster->isAliveInNTurns(turns_to_reach))
                 continue;
 
@@ -1393,7 +1397,7 @@ int main()
         cerr << elapsed() << "Known monsters: " << endl;
         for (auto entity : calculator.monsters) {
             if (find(begin(calculator.threats), end(calculator.threats), entity) == end(calculator.threats))
-                cerr << elapsed() << "  " << entity->id << endl;
+                cerr << elapsed() << "  " << entity->id << ", " << entity->position << endl;
         }
         calculator.calculateTurnsUntilIMonstersAttack();
 
