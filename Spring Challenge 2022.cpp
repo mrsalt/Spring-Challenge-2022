@@ -22,6 +22,7 @@ string elapsed() {
 
 const int RING_SIZE = 5000;
 const int RINGS_TO_TRACK = 3;
+int turn_count = 0;
 
 const int BASE_RADIUS = 5000;
 const int BASE_DAMAGE_RADIUS = 300;
@@ -585,7 +586,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         Point position = threat.position;
         int health = threat.health;
         vector<pair<int, int>> turnsToInterdict;
-        cerr << elapsed() << "Turns to interdict:" << endl;
+        cerr << elapsed() << "Turns to interdict:" << threat.id << endl;
         for (int h = 0; h < heroes.size(); h++) {
             if (actions[h])
                 continue; // action already assigned
@@ -916,10 +917,10 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         if (allActionsAreSet(actions)) return actions;
 
         // Shield against an enemy spellcaster
-        if (opponent_stats.mana > 10 && my_stats.mana > 30) { // !turnsToReachBase.empty() && turnsToReachBase[0].second < 15 && 
+        if (opponent_stats.mana > 10 && my_stats.mana > 100 && turn_count > 100) { // !turnsToReachBase.empty() && turnsToReachBase[0].second < 15 && 
             for (int h = 0; h < heroes.size(); h++) {
                 auto hero = heroes[h];
-                if (hero->shield_life > 0)
+                if (hero->shield_life > 0 || (hero->position - my_stats.base).distance() > (BASE_RADIUS + 1000))
                     continue;
                 for (int j = 0; j < opposing_heroes.size(); j++) {
                     auto opponent = opposing_heroes[j];
@@ -945,7 +946,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             return actions;
         }
 
-        for (auto& t : threats) {
+        for (auto& t : top_threats) {
             const Entity& threat = *t;
             const auto& analysis = canThreatBeEliminated(threat, actions);
             if (analysis.first) {
@@ -1152,10 +1153,10 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         static int controlCount = 0;
         double angle;
         if (controlCount % 2 == 0) {
-            angle = opponent_stats.start_angle + (M_PI_2 / 40.0);
+            angle = opponent_stats.start_angle + (M_PI_2 / 5.0);
         }
         else {
-            angle = opponent_stats.end_angle - (M_PI_2 / 40.0);
+            angle = opponent_stats.end_angle - (M_PI_2 / 5.0);
         }
 
         controlCount++;
@@ -1385,7 +1386,6 @@ int main()
 
     find_default_hero_placements(my_stats, opponent_stats);
 
-    int turn_count = 0;
     // game loop
     while (1) {
         turn_count++;
