@@ -158,12 +158,6 @@ struct Point
     }
 };
 
-struct Arc
-{
-    double start;
-    double end;
-};
-
 vector<Point> default_hero_location;
 vector<Point> default_hero_location_in_standard_mode;
 vector<Point> default_hero_location_in_attack_mode;
@@ -236,6 +230,17 @@ struct Polar
         return out;
     }
 };
+
+struct Arc
+{
+    double start;
+    double end;
+
+    bool includes(const Polar& p) const {
+        return p.theta >= start && p.theta <= end;
+    }
+};
+vector<Arc> permitted_range;
 
 struct PlayerStats {
     int health;
@@ -599,6 +604,9 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         for (int h = 0; h < heroes.size(); h++) {
             if (actions[h])
                 continue; // action already assigned
+            // Don't allow heroes outside their permitted range
+            if ((threat.position - my_stats.base).distance() > BASE_RADIUS && !permitted_range[h].includes(threat.polar))
+                continue;
             int turns = countTurnsToInterdict(threat, *heroes[h]);
             cerr << elapsed() << "  Hero[" << h << "]: " << turns << endl;
             turnsToInterdict.push_back(make_pair(h, turns));
@@ -1011,7 +1019,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                     cerr << elapsed() << "Assigning hero " << hero.id << " to attack threat at " << p << endl;
                     actions[h] = assignMoveAction(hero, p);
                 }
-                if (analysis.second.size() >= heroes.size())
+                if (allActionsAreSet(actions))
                     return actions;
             }
             else {
@@ -1030,7 +1038,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             for (int r = 0; r < rings.size(); r++) {
                 Ring<vector<Entity*>>& ring = rings[r];
 
-                vector<Entity*> closest = findClosestMonsters(*heroes[h], ring.data);
+                vector<Entity*> closest = findClosestMonsters(*heroes[h], ring.data, permitted_range[h]);
                 if (!closest.empty()) {
                     bool canReachMultiple = false;
                     for (int m = min(4, (int)closest.size()); m > 0; m--) {
@@ -1053,13 +1061,13 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                             closest = turnsToReachBase[0].first;
                         }
                         else {
-                            closest = findClosestMonster(*heroes[h], ring.data, min_distance);
+                            closest = findClosestMonster(*heroes[h], ring.data, permitted_range[h], min_distance);
                         }
                     }
                     else {
-                        closest = findClosestMonster(*heroes[h], ring.segmentList[h].data, min_distance);
+                        closest = findClosestMonster(*heroes[h], ring.segmentList[h].data, permitted_range[h], min_distance);
                         if (closest == nullptr)
-                            closest = findClosestMonster(*heroes[h], ring.data, min_distance, closest);
+                            closest = findClosestMonster(*heroes[h], ring.data, permitted_range[h], min_distance, closest);
                     }
                     if (closest != nullptr) {
                         placement = closest->position;
@@ -1167,7 +1175,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         return Polar(BASE_RADIUS, angle).toPoint(opponent_stats.base);
     }
 
-    vector<Entity*> findClosestMonsters(const Entity& hero, const vector<Entity*>& monsters)
+    vector<Entity*> findClosestMonsters(const Entity& hero, const vector<Entity*>& monsters, const Arc& allowed_range)
     {
         vector<Entity*> closest;
         for (auto& monster : monsters) {
@@ -1178,6 +1186,10 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             int distance = (hero.position - monster->position).distance();
             int turns_to_reach = countTurnsToInterdict(*monster, hero);
             if (!monster->isAliveInNTurns(turns_to_reach))
+                continue;
+
+            int base_distance = (my_stats.base - monster->position).distance();
+            if (base_distance > BASE_RADIUS && !allowed_range.includes(monster->polar))
                 continue;
 
             closest.push_back(monster);
@@ -1195,7 +1207,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         return closest;
     }
 
-    const Entity* findClosestMonster(const Entity& hero, const vector<Entity*>& monsters, int& min_distance, const Entity* closest = nullptr)
+    const Entity* findClosestMonster(const Entity& hero, const vector<Entity*>& monsters, const Arc& allowed_range, int& min_distance, const Entity* closest = nullptr)
     {
         for (auto& monster : monsters) {
             // don't attack monsters that are going to attack my opponent
@@ -1205,6 +1217,10 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             int distance = (hero.position - monster->position).distance();
             int turns_to_reach = countTurnsToInterdict(*monster, hero);
             if (!monster->isAliveInNTurns(turns_to_reach))
+                continue;
+
+            int base_distance = (my_stats.base - monster->position).distance();
+            if (base_distance > BASE_RADIUS && !allowed_range.includes(monster->polar))
                 continue;
 
             cerr << elapsed() << "Determined it will take hero " << hero.id << " " << turns_to_reach << " turns to reach monster " << monster->id << endl;
@@ -1281,6 +1297,11 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
         default_hero_location.push_back(p);
         current += defender_arc;
     }
+    double arc_for_two = (my_stats.arc.end - my_stats.arc.start) / 2;
+
+    permitted_range.push_back({ my_stats.arc.start, my_stats.arc.start + arc_for_two });
+    permitted_range.push_back({ my_stats.arc.start, my_stats.arc.end });
+    permitted_range.push_back({ my_stats.arc.start + arc_for_two, my_stats.arc.end });
 
     current = opponent_stats.arc.start + defender_arc;
     for (int i = 0; i < heroes_per_player; i++) {
@@ -1289,7 +1310,6 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
         current += defender_arc / 2;
     }
 
-    double arc_for_two = (my_stats.arc.end - my_stats.arc.start) / 2;
     default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.arc.start + arc_for_two / 2.0).toPoint(my_stats.base));
     default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, (opponent_stats.arc.start + opponent_stats.arc.end) / 2.0).toPoint(opponent_stats.base));
     default_hero_location_in_attack_mode.push_back(Polar(BASE_RADIUS + HERO_TRAVEL * 2, my_stats.arc.start + arc_for_two * 3.0 / 4.0).toPoint(my_stats.base));
@@ -1342,7 +1362,7 @@ int main()
 
         cerr << elapsed() << "Known threats: " << endl;
         for (auto entity : calculator.threats) {
-            cerr << elapsed() << *entity << endl;
+            cerr << elapsed() << "  " << entity->id << ", " << entity->position << endl;
         }
 
         cerr << elapsed() << "Known monsters: " << endl;
