@@ -942,6 +942,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                     }
                 }
             }
+            actions[1] = move(attackerAction);
         }
 
         if (turnsUntilBaseIsAttacked < 13 && my_stats.mana > 30 && !top_threats.empty()) {
@@ -1290,7 +1291,7 @@ void find_default_hero_placements(PlayerStats& my_stats, PlayerStats& opponent_s
     default_hero_location_in_standard_mode = default_hero_location;
 }
 
-// in Silver League now
+// in Gold League now
 int main()
 {
     start = Clock::now();
