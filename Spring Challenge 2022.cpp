@@ -608,7 +608,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
             if ((threat.position - my_stats.base).distance() > BASE_RADIUS && !permitted_range[h].includes(threat.polar))
                 continue;
             int turns = countTurnsToInterdict(threat, *heroes[h]);
-            cerr << elapsed() << "  Hero[" << h << "]: " << turns << endl;
+            cerr << elapsed() << "  Hero[" << h << "]: " << turns << ", distance: " << (heroes[h]->position - threat.position).distance() << endl;
             turnsToInterdict.push_back(make_pair(h, turns));
         }
         vector<int> heroes_needed_for_threat;
@@ -979,7 +979,8 @@ struct ActionCalculator : RingList<vector<Entity*>> {
         if (allActionsAreSet(actions)) return actions;
 
         // Shield against an enemy spellcaster
-        if (opponent_stats.mana > 10 && my_stats.mana > 100 && turn_count > 100) { // !turnsToReachBase.empty() && turnsToReachBase[0].second < 15 && 
+        /*
+        if (opponent_stats.mana > 10 && my_stats.mana > 100 && turn_count > 100) {
             for (int h = 0; h < heroes.size(); h++) {
                 auto hero = heroes[h];
                 if (hero->shield_life > 0 || (hero->position - my_stats.base).distance() > (BASE_RADIUS + 1000))
@@ -991,7 +992,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                     }
                 }
             }
-        }
+        }*/
 
         if (allActionsAreSet(actions)) return actions;
 
@@ -1090,7 +1091,7 @@ struct ActionCalculator : RingList<vector<Entity*>> {
                 cerr << elapsed() << "Aborting move -- reaches fewer monsters than current position." << endl;
                 actions[h] = make_unique<WaitAction>();
             }
-            else if (potentialReached == currentReached && my_stats.mana > 20) {
+            else if (potentialReached == currentReached && my_stats.mana > 20 && inAttackMode) {
                 // do control actions work inside my base?
                 cerr << elapsed() << "Searching for monster to control" << endl;
                 actions[h] = findMonsterToControl(*heroes[h], actions);
